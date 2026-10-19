@@ -1,0 +1,39 @@
+MIT License
+
+Copyright (c) 2026 awalol (DS5Dongle, base project)
+Copyright (c) 2026 artzox (auto-haptics, DS4Windows compatibility, effect leak, and related modifications)
+
+This project is a derivative of awalol/DS5Dongle (https://github.com/awalol/DS5Dongle),
+which is itself MIT licensed. The original copyright notice is retained above as
+required by the MIT License.
+
+Acknowledgment: the audio-derived auto-haptics in this project were inspired by the
+earlier auto-haptics work of loteran on the DS5Dongle. While the DSP and related
+code here were independently rewritten, loteran's original experiments — in
+particular relocating `state_set` to RAM, which enabled haptic actuation at stock
+clock speeds — were the foundation that made this feature possible. With thanks.
+
+Acknowledgment: the stuck-rumble fix (sending controller state when it changes even
+while the speaker is active) is based on mik9's upstream "Fix stuck rumble" commit to
+DS5Dongle. The USB suspend/wake hardening (debounced controller power-off to ride out
+hub-induced suspends, and a grace window so a deliberate USB reconnect is not mistaken
+for a host sleep) is based on up2urheadlights' upstream pull request #186 to DS5Dongle.
+Both were adapted to the v0.7.0 base used here. With thanks.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

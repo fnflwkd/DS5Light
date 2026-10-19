@@ -1,0 +1,11 @@
+{
+  "mode": "normal",
+  "bypass": true,
+  "strength": 0.55,
+  "background": true,
+  "transient": true,
+  "limiter": "hard",
+  "center": true,
+  "rear": true,
+  "lfe": true
+}

@@ -1,0 +1,23 @@
+{
+  "source_sha256": "53c87f031a25cc59c4d62a130dc99b397507e960d90a245f4addd8e2985a1751",
+  "source_backup_savedAt": "2026-10-16T16:07:08.722Z",
+  "source": "User-provided ds5dongle-slots.json; not a fresh device read",
+  "single_profiles": "settings preserved exactly; only active custom trigger states included, matching Export Profile behavior",
+  "hardware_import_tested": false,
+  "profiles": {
+    "Audio Haptics": {
+      "index": 3,
+      "active_custom_r2_states": 0,
+      "active_custom_l2_states": 0
+    },
+    "DS Native": {
+      "index": 0,
+      "active_custom_r2_states": 0,
+      "active_custom_l2_states": 0
+    }
+  },
+  "distributed_profiles": [
+    "Audio-Haptics.profile.json",
+    "DS-Native.profile.json"
+  ]
+}

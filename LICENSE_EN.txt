@@ -1,0 +1,25 @@
+DS5 Light Free Use, Modification and Redistribution License 1.0
+English translation of the Korean original dated 2026-10-19.
+This translation is for convenience. If interpretations differ, LICENSE.txt (Korean) controls.
+
+1. Scope
+This license applies only to portions of DS5 Light's own code and documentation that the relevant rights holder can lawfully license (the "Covered Portions"). "Program" includes the original and derivative versions containing or modifying Covered Portions. It creates no new exclusive rights over mere functions, ideas, algorithms or unprotected material, and asserts no rights the licensor does not hold.
+Third-party code, libraries and materials retain their original licenses. Components documented in vendor/, THIRD_PARTY/ and SOURCES.md are not relicensed here. Images and icons in assets/ are excluded and require separate rights verification. Separately licensed evaluation tools, such as StudioProxy, follow their stated licenses. Independent use of third-party components under their original licenses is not restricted by this license.
+
+2. Permissions
+Subject to these conditions, you receive non-exclusive, royalty-free permission for the Covered Portions to download, install, run, copy and study the Program; modify it and create derivatives; redistribute original or modified source/binaries free of charge; use it as an internal tool as an individual, organization or business; and use it as a tool to produce monetized game streams/videos.
+Advertising, subscription or donation income from the streams/videos alone does not prohibit such use. Charging for the Program or its functionality is governed by section 3. Disclosure of modified source is not required.
+
+3. Actions requiring separate prior written permission
+You may not sell the original or modified Program, or charge fees or mandatory donations for downloading, distribution, licensing, execution or access. You may not include the Program or Covered Portions in paid software, hardware, products or bundles, even without a separate price for the Program. You may not integrate them into paid services or provide their functionality through paid subscriptions, rental, remote services or similar arrangements. Renaming, modifying or incorporating only some code does not bypass these restrictions.
+Business use as an internal tool or for making streams/videos differs from providing the Program or its functionality as part of a product/service sold to customers. Voluntary donations not required for use, download or feature access are permitted. Exceptions require prior written permission from a rights holder authorized to license the relevant Covered Portions.
+
+4. Redistribution
+Preserve and supply this license and existing copyright, attribution and third-party notices. Identify modifications and who made them; do not present a modified version as the official original distribution or as endorsed by the original creator. Recipients of redistributed Covered Portions must be able to exercise rights under this license; you may not grant permission to remove section 3 restrictions. Comply separately with third-party notice/source-provision and other obligations.
+
+5. Rights and disclaimer
+This license does not transfer copyright and does not guarantee trademark/logo rights or third-party permissions. Rights not separately granted remain with their holders. The Program is provided as is. To the extent permitted by law, warranties of suitability, accuracy or integrity and liability for damage arising from use are disclaimed. Mandatory statutory user rights are not excluded.
+
+6. Breach and interpretation
+Acts violating these conditions fall outside this license's permission. This license does not prohibit acts independently permitted by law or rights under original third-party licenses. If a provision is unenforceable, the remaining provisions continue to the extent permitted by law.
+This is a custom license restricting sales and paid integration, not an OSI-approved open-source license.

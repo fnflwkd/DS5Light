@@ -1,0 +1,16 @@
+{
+  "commit": "724f0603df0b4a7c2c6ba56227d51ef40f64f706",
+  "tag": "v0.2.12.8",
+  "source_url": "https://codeload.github.com/s0d3s/PyAudioWPatch/tar.gz/724f0603df0b4a7c2c6ba56227d51ef40f64f706",
+  "source_sha256": "0478c40b048b78a7e4536cd260ff2723dd7b067a2ac5832ac1eca4781b004a7b",
+  "wheel_url": "https://files.pythonhosted.org/packages/e5/e1/c25c239737386a3fd85354ce35a00fbe83e993a7e51d76791022850ca12c/pyaudiowpatch-0.2.12.8-cp312-cp312-win_amd64.whl",
+  "wheel_sha256": "fd163a6531c4e4969925e687ef1bc57fae8ecc1a95de7ba707a436622552d7fa",
+  "bundled_pyd_matches_official_wheel": true,
+  "header_notices": 36,
+  "build_backends": [
+    "wasapi",
+    "wmme",
+    "directx"
+  ],
+  "ASIO_in_documented_build": false
+}
