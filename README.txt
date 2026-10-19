@@ -28,7 +28,7 @@ Basic use
 
 The hard/soft limiter acts on extra-channel summing; it is inactive for stereo. Hard clipping is the default.
 
-Pure mode is currently unsupported. Existing Pure presets keep added audio muted; the app never silently switches them to Normal. The game's normal rumble uses its existing separate path.
+The game's normal rumble uses its existing separate path.
 
 Saved settings
 

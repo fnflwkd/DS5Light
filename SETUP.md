@@ -77,5 +77,5 @@ Speaker Volume and Speaker Gain are both 0 in the supplied profile. They are alr
 ## 4. Adjust haptics and troubleshoot
 - Try disabling Center for dialogue vibration or LFE for music bass. Dialogue/music can also exist in other channels.
 - Suppression strength is not a vibration-volume control. More suppression can also weaken effects. Change one setting at a time, including when tuning Studio strength.
-- No haptics? Check the active Studio slot, Mix, ch0/1, dongle connection, output selection and filter bypass. Pure mode is currently unsupported and keeps added audio muted.
+- No haptics? Check the active Studio slot, Mix, ch0/1, dongle connection, output selection and filter bypass.
 

@@ -40,7 +40,7 @@ Use the **Windows-x64 ZIP** from this repository's Releases section, rather than
 3. Select your game, turn on the PC suppression filter, choose **Balanced**, and select **Start**.
 4. For native-haptics games, stop DS5 Light and activate **DS Native** in Studio.
 
-The PC filter is off in the shipped default configuration. Channel-format selection does not automatically read the game's internal audio settings. Pure mode is currently unsupported.
+The PC filter is off in the shipped default configuration. Channel-format selection does not automatically read the game's internal audio settings.
 
 [Studio profile instructions](studio-presets/README.txt) · [Build instructions](README.txt) · [Component sources](SOURCES.md)
 
