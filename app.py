@@ -49,7 +49,7 @@ class Switch(tk.Canvas):
 class App:
     def __init__(self,root):
         self.root=root; self.engine=None; self.connection=None; self.last_render=None; self.device_channel_cache={}
-        root.title('DS5 Light · 0.9.0'); root.configure(bg=BG)
+        root.title('DS5 Light · 0.9.1'); root.configure(bg=BG)
         root.iconbitmap(default=str(Path(__file__).resolve().parent/'assets'/'dslight.ico'))
         root.geometry('1000x940'); root.minsize(960,920)
         style=ttk.Style(root); style.theme_use('clam')
@@ -158,6 +158,7 @@ class App:
             b=ttk.Checkbutton(self.advanced,text=text,variable=var,command=self.update_controls); b.pack(side='left',padx=(0,12)); self.filter_widgets.append(b)
         self.filter_note=ttk.Label(right,style='Muted.TLabel',wraplength=390,font=('맑은 고딕',9)); self.filter_note.pack(anchor='w',pady=(12,0))
         connect=tk.Frame(outer,bg=BG); connect.grid(row=3,column=0,sticky='ew',pady=(10,10))
+        ttk.Button(connect,text='Studio '+('슬롯' if LANGUAGE=='ko' else 'slots'),command=self.open_studio).pack(side='right')
         ttk.Button(connect,text=tr('연결 설정 · 도움말'),command=self.open_connection).pack(side='left')
         self.connection_summary=tk.Label(connect,bg=BG,fg=MUTED,font=('맑은 고딕',9)); self.connection_summary.pack(side='left',padx=13)
         footer=self.card(outer); footer.grid(row=4,column=0,sticky='ew')
@@ -169,6 +170,12 @@ class App:
         self.refresh_slots(); self.render()
         if self.store.error: root.after(100,lambda:messagebox.showerror(tr('프리셋 파일 오류'),str(self.store.path)+'\n'+tr(self.store.error)+tr('\n기존 파일을 보존하기 위해 저장이 차단됩니다.'),parent=root))
         root.after(150,self.refresh_games); root.after(1000,self.tick)
+    def open_studio(self):
+        from studio_ui import StudioWindow
+        previous=getattr(self,'studio_window',None)
+        if previous is not None and previous.win.winfo_exists():
+            previous.win.lift(); return
+        self.studio_window=StudioWindow(self)
     def change_language(self,event=None):
         code='ko' if self.language_choice.get()=='한국어' else 'en'
         try:
@@ -290,6 +297,9 @@ class App:
                 enabled=enabled and (self.scope.get()=='process' or ch in (2,6))
             w.configure(state='readonly' if enabled else 'disabled')
     def start(self):
+        panel=getattr(self,'studio_window',None)
+        if panel is not None and panel.busy:
+            self.status.set('Studio '+('작업 완료 후 시작하세요.' if LANGUAGE=='ko' else 'operation in progress. Wait before starting.'));return
         if self.engine: return
         if self.destination.get() not in self.outputs or self.scope.get()=='device' and self.source.get() not in self.inputs:
             messagebox.showerror(tr('장치 선택'),tr('연결 설정에서 입출력 장치를 선택하세요.'),parent=self.root); return
@@ -355,6 +365,14 @@ def smoke(app,report):
     results['device_connection_fields']=str(app.conn_widgets['source']['state'])=='readonly' and str(app.conn_widgets['channel']['state'])=='readonly'
     app.connection.destroy(); app.connection=None
     results.update(language=LANGUAGE,controls=asdict(app.controls),tk_window_created=True,audio_started=False,width=app.root.winfo_width(),height=app.root.winfo_height(),requested_height=app.root.winfo_reqheight(),inputs=app.inputs,outputs=app.outputs,preset_slots=SLOT_COUNT)
+    app.open_studio(); app.root.update_idletasks()
+    panel=app.studio_window
+    results['studio_dialog_created']=panel.win.winfo_exists()==1
+    results['studio_dialog_fits']=panel.win.winfo_reqheight()<=panel.win.winfo_height()
+    results['studio_apply_initially_disabled']=str(panel.apply['state'])=='disabled'
+    import hid
+    results['hid_module_available']=hasattr(hid,'device')
+    panel.close()
     report.write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
     return results
 

@@ -1,4 +1,4 @@
-﻿DS5 Light 0.9.0
+﻿DS5 Light 0.9.1
 
 처음 사용하는 분: Studio 준비·슬롯 설정·PC 실행 안내 (SETUP_KO.md)를 먼저 읽어 주세요. 기존 Studio 사용자는 펌웨어를 다시 설치할 필요가 없습니다.
 
@@ -13,7 +13,7 @@ PC 필터를 끄면 억제만 우회하며 채널 합산은 유지됩니다. 게
 게임별 프리셋은 사용자 LocalAppData의 DS5Light/presets.json에 저장됩니다. 장치 설정은 이 프로그램이 자동으로 변경하지 않습니다.
 
 소스 빌드
-Python 3.12 x64와 Windows .NET Framework C# 컴파일러가 필요합니다. PowerShell에서 build.ps1을 실행하면 의존성 설치, 테스트, 빌드 및 고지 수집을 진행합니다. 결과는 dist-0.9.0/DS5Light입니다. 순수 소스 실행은 필요한 의존성과 ProcessCapture.exe 빌드를 먼저 준비해야 합니다.
+Python 3.12 x64와 Windows .NET Framework C# 컴파일러가 필요합니다. PowerShell에서 build.ps1을 실행하면 의존성 설치, 테스트, 빌드 및 고지 수집을 진행합니다. 결과는 dist-0.9.1/DS5Light입니다. 순수 소스 실행은 필요한 의존성과 ProcessCapture.exe 빌드를 먼저 준비해야 합니다.
 
 배포 조건
 무료 사용·수정·무료 재배포는 허용합니다. 원본·수정판 판매 및 유료 제품·서비스에 포함은 별도 서면 허락이 필요합니다. 수익형 게임 방송에서 도구로 사용하는 것은 허용합니다. LICENSE.txt와 DISTRIBUTION_POLICY_KO.md를 보세요. 외부 구성요소는 원래 라이선스를 유지합니다. OSI 승인 오픈소스가 아닙니다.
@@ -31,3 +31,8 @@ Microsoft 런타임에는 THIRD_PARTY/upstream/Python-3.12.10-CRT-LICENSE.txt의
 이번 변경은 UI 번역과 언어 설정만 추가했습니다. 0.8.7의 DSP·채널 합산·입출력 코드는 유지했습니다.
 
 Studio 프리셋: Audio Haptics / DS Native 적용 안내 (studio-presets/README_KO.txt). 적용 전에 본인 설정을 백업하세요.
+
+Studio 동글 슬롯 (0.9.1)
+메인 화면의 Studio 슬롯 → 조회 / 새로고침을 누르면 연결된 동글의 1~10번 이름을 읽습니다. 빈 슬롯은 Empty, 조회 불가능한 슬롯은 Unavailable로 구분합니다. 여러 장치가 있으면 대상 장치를 직접 선택하세요.
+목록에서 고른 뒤 오디오를 정지하고 적용을 누르세요. 선택한 슬롯의 트리거·자이로 등 전체 설정이 적용되며, PC 게임별 프리셋은 바뀌지 않습니다. 슬롯 저장·덮어쓰기 및 자동 전환은 하지 않습니다.
+Studio 포털에서 동시에 슬롯 작업을 하지 마세요. 응답 시간 초과는 적용 실패를 확정하지 못하므로 포털에서 현재 설정을 확인하세요. USB 재연결 필요 안내가 나오면 동글을 재연결한 후 다시 조회하세요.

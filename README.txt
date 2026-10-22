@@ -36,7 +36,7 @@ Presets: %LOCALAPPDATA%/DS5Light/presets.json. Language: %LOCALAPPDATA%/DS5Light
 
 Build from source
 
-Install Python 3.12 x64. The build script also uses the Windows .NET Framework C# compiler. Run powershell -ExecutionPolicy Bypass -File build.ps1 in this directory. It creates a virtual environment, installs the pinned dependencies, runs tests, builds the helper/app and collects third-party notices. Output: dist-0.9.0/DS5Light.
+Install Python 3.12 x64. The build script also uses the Windows .NET Framework C# compiler. Run powershell -ExecutionPolicy Bypass -File build.ps1 in this directory. It creates a virtual environment, installs the pinned dependencies, runs tests, builds the helper/app and collects third-party notices. Output: dist-0.9.1/DS5Light.
 
 License and status
 
@@ -49,3 +49,8 @@ Microsoft runtime redistribution conditions are included in THIRD_PARTY/upstream
 Synthetic/unit tests and UI checks do not establish real-game suppression quality, controller feel, latency or FPS impact. Universal music/dialogue removal is not claimed. Version 0.9.0 adds UI localization; audio DSP and channel mixing are unchanged from 0.8.7. No new physical audio/controller test was performed for this update.
 
 Studio presets: Audio Haptics and DS Native (studio-presets/README.txt). Back up your settings before applying.
+
+Studio dongle slots (0.9.1)
+Select Studio slots, then Read / Refresh to read names for slots 1–10 from the connected dongle. Empty means an empty slot; Unavailable means its information could not be read. Select the intended device if multiple candidates are listed.
+Select a slot, stop audio and press Apply. This loads all settings in that slot, including triggers and gyro. PC presets are separate. The app does not overwrite saved slots or switch automatically.
+Do not perform slot operations in the Studio portal concurrently. A timeout does not prove activation failed; check the current settings in the portal. If USB reconnection is required, reconnect the dongle and refresh.

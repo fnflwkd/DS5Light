@@ -9,7 +9,7 @@ def collect(exe,target):
     shutil.copy2('vendor/LICENSE-Studio.txt',target/'DS5Dongle-Studio-LICENSE.txt')
     archive=CArchiveReader(str(exe)).open_embedded_archive('PYZ.pyz')
     mapping=packages_distributions()
-    names={'numpy','scipy','PyAudioWPatch','pyinstaller','pyinstaller-hooks-contrib'}
+    names={'numpy','scipy','PyAudioWPatch','pyinstaller','pyinstaller-hooks-contrib','hidapi'}
     for module in archive.toc: names.update(mapping.get(module.split('.')[0],[]))
     if (exe.parent/'_internal/win32').exists(): names.add('pywin32')
     manifest=[]
