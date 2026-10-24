@@ -13,6 +13,9 @@ DS5 Light adds adaptive filtering to the copy of game audio sent to your dongle.
 - Include rear L/R, Center and LFE separately with 5.1 input.
 - Save game settings in 12 preset slots.
 - Switch between Korean and English UI.
+- Switch Studio dongle slots and adjust overall Gain, audio-haptics Intensity and shared trigger reduction from the main window.
+- View DualSense battery status, refreshed every five minutes, and sort processes by sampled CPU usage.
+- Restore the last PC settings on launch; Studio settings are separate.
 - Use the included **Audio Haptics** and **DS Native** Studio profiles.
 
 ## How the filter works
