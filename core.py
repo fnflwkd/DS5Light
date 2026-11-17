@@ -1,7 +1,13 @@
 """독립 구현: causal 대역별 배경 억제. 음악/음성 분리기는 아니다."""
 from dataclasses import dataclass
 import numpy as np
-from scipy.signal import butter, sosfilt
+def butter(*args, **kwargs):
+    from scipy.signal import butter as implementation
+    return implementation(*args, **kwargs)
+
+def sosfilt(*args, **kwargs):
+    from scipy.signal import sosfilt as implementation
+    return implementation(*args, **kwargs)
 
 RATE = 48000
 BLOCK = 240
@@ -50,6 +56,8 @@ def duplicate(x):
 
 class Processor:
     def __init__(self):
+        from scipy.signal import sosfilt as filter_function
+        self._filter = filter_function
         # Complementary differences sum exactly to x; common stereo controls.
         self.sos = [butter(2, f, fs=RATE, output='sos') for f in (120, 600, 2500)]
         self.zi = [np.zeros((len(s), 2, 2)) for s in self.sos]
@@ -62,6 +70,8 @@ class Processor:
         self.until = -1e9
         self.age = 0.
         self.last_mode = 'normal'
+        self._size = 0
+        self._controls = None
 
     def process(self, x, controls=Controls(), rumble=RumbleSample(), now=0.):
         x = select_stereo(x)
@@ -71,16 +81,31 @@ class Processor:
         if not n:
             return x
         dt = n / RATE
+        if self._size != n:
+            self._size = n
+            self._bands = np.empty((4, n, 2), dtype=np.float64)
+            self._squared = np.empty_like(self._bands)
+            self._weighted = np.empty_like(self._bands)
+            self._positions = np.arange(1, n+1)[None, :]
+            self._alpha = 1-np.exp(-dt/.35)
+        if controls is not self._controls:
+            self._strength = np.clip(controls.strength, 0, 1)
+            self._controls = controls
         lows = []
         for k, sos in enumerate(self.sos):
-            low, self.zi[k] = sosfilt(sos, x, axis=0, zi=self.zi[k])
+            low, self.zi[k] = self._filter(sos, x, axis=0, zi=self.zi[k])
             lows.append(low)
-        bands = np.stack((lows[0], lows[1]-lows[0], lows[2]-lows[1], x-lows[2]))
+        bands = self._bands
+        np.copyto(bands[0], lows[0])
+        np.subtract(lows[1], lows[0], out=bands[1])
+        np.subtract(lows[2], lows[1], out=bands[2])
+        np.subtract(x, lows[2], out=bands[3])
         # Energy before channel combination avoids antiphase cancellation.
-        energy = np.mean(bands * bands, axis=(1, 2))
+        np.multiply(bands, bands, out=self._squared)
+        energy = np.mean(self._squared, axis=(1, 2))
         amplitude = np.sqrt(energy + 1e-12)
         relative = np.maximum(0., amplitude-self.previous)/(self.previous+.003)
-        a = 1-np.exp(-dt/.35)
+        a = self._alpha
         deviation = np.abs(relative-self.mean)
         z = np.maximum(0., relative-self.mean)/(self.dev+.08)
         novelty = np.clip(z/4, 0, 1) * np.clip(amplitude/.008, 0, 1)
@@ -96,15 +121,16 @@ class Processor:
         self.age += dt
         # No onset-only bypass: novelty protects only part of attenuation.
         protection = .5*contrast + (.25*novelty if controls.transient else 0)
-        strength = np.clip(controls.strength, 0, 1)
+        strength = self._strength
         target = 10**((-14*strength*(1-protection))/20)
         if not controls.background or controls.bypass:
             target[:] = 1
         # Gains ramp sample-by-sample. No AGC or upward output boost.
         tau = np.where(target > self.gain, .008, .060)
         end = self.gain+(target-self.gain)*(1-np.exp(-dt/tau))
-        ramp = self.gain[:, None]+(end-self.gain)[:, None]*np.arange(1, n+1)[None, :]/n
-        y = np.sum(bands*ramp[:, :, None], axis=0)
+        ramp = self.gain[:, None]+(end-self.gain)[:, None]*self._positions/n
+        np.multiply(bands, ramp[:, :, None], out=self._weighted)
+        y = np.sum(self._weighted, axis=0)
         self.gain = end
         if controls.mode not in ('normal', 'pure'):
             raise ValueError('알 수 없는 모드')

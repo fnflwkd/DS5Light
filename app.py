@@ -1,26 +1,32 @@
 import os
+import sys
 os.environ.setdefault('OPENBLAS_NUM_THREADS','1')
 os.environ.setdefault('OMP_NUM_THREADS','1')
 import json
-import sys
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from pathlib import Path
 from dataclasses import asdict
 from audio import Engine, InstanceLock, devices
+from remap_audio_pause import restart_pending
 from core import Controls
 from battery import BatteryMonitor,battery_text,BatteryIcon
-from process_list import process_list
+from process_list import process_list, process_identity
+from feature_settings import FeatureStore
+from mute_shortcut import ShortcutMonitor, parse_keys
+from studio_ui import msg
 from session_settings import SessionStore
+from remap_state import has_pending_edits
 from presets import PresetStore, SLOT_COUNT, match_game
 from localization import tr, LANGUAGE, save_language, canonical_device, display_device
 
 BG='#151b25'; CARD='#202937'; FG='#e5edf7'; MUTED='#9cacc1'; BORDER='#344256'; ACCENT='#82e5cc'; DISABLED='#647184'
 AUTO=tr('자동 선택 · 기존 BAT 방식')
-CHANNELS={tr('5.1채널 (홈시어터)'):6,tr('2채널 (스테레오)'):2}
-PROCESS_SORT={('이름순 A–Z' if LANGUAGE=='ko' else 'Name A–Z'):'name',('CPU 사용률순' if LANGUAGE=='ko' else 'CPU usage'):'cpu'}
+CHANNELS={tr('5.1채널 (홈시어터)'):6,tr('2채널 (스테레오)'):2,tr('7.1채널 (후방·측면)'):8}
+PROCESS_SORT={('이름순 A–Z' if LANGUAGE=='ko' else 'Name A–Z'):'name',('CPU 사용률순' if LANGUAGE=='ko' else 'CPU usage'):'cpu',tr('오디오 활동순'):'audio'}
 LIMITERS={tr('초과분 자르기'):'hard',tr('부드러운 제한'):'soft'}
 
 class Switch(tk.Canvas):
@@ -53,14 +59,21 @@ class Switch(tk.Canvas):
 
 class App:
     def __init__(self,root):
+        self.closing=False;self.stopping=False;self.intent_generation=0;self.last_game_path=None
+        self.shortcut=ShortcutMonitor()
         self.session_timer=None;self.session_ready=False;self.games_busy=False;self.games_queue=queue.Queue()
         self.root=root; self.engine=None; self.connection=None; self.last_render=None; self.device_channel_cache={}
-        root.title('DS5 Light · 0.9.8'); root.configure(bg=BG)
+        root.title('DS5 Light · 1.0'); root.configure(bg=BG)
         root.iconbitmap(default=str(Path(__file__).resolve().parent/'assets'/'dslight.ico'))
-        root.geometry('1120x980'); root.minsize(1060,980)
+        from ui_viewport import Viewport, fit, watch_popups, fit_content
+        self.viewport=Viewport(root);body=self.viewport.body
+        fit(root,1040,900);watch_popups(root)
         style=ttk.Style(root); style.theme_use('clam')
         style.configure('.',font=('맑은 고딕',10),background=CARD,foreground=FG)
         style.configure('TFrame',background=CARD)
+        style.configure('TNotebook',background=BG,borderwidth=0)
+        style.configure('TNotebook.Tab',background=CARD,foreground=MUTED,padding=(16,2))
+        style.map('TNotebook.Tab',background=[('selected','#2a5047'),('active','#293546')],foreground=[('selected',ACCENT),('active',FG)])
         style.configure('TLabel',background=CARD,foreground=FG)
         style.configure('Muted.TLabel',foreground=MUTED,font=('맑은 고딕',9))
         style.configure('TButton',padding=(10,5),background='#293546',foreground=FG,bordercolor=BORDER,relief='flat')
@@ -87,6 +100,7 @@ class App:
         session_path=preset_path.with_name('last_settings.json')
         if '--preset-test-path' in sys.argv:session_path=preset_path.with_suffix('.session.json')
         self.session=SessionStore(session_path)
+        self.features=FeatureStore(preset_path.with_name("feature_settings.json"))
         self.process_order=tk.StringVar(value=list(PROCESS_SORT)[0])
         self.game_selection=tk.StringVar()
         self.store=PresetStore(preset_path); self.desired_game=''; self.game_map={}; self.game_names={}
@@ -99,32 +113,38 @@ class App:
         self.strength=tk.DoubleVar(value=c.strength*100); self.bg=tk.BooleanVar(value=c.background); self.transient=tk.BooleanVar(value=c.transient)
         self.center=tk.BooleanVar(value=c.center); self.rear=tk.BooleanVar(value=c.rear); self.lfe=tk.BooleanVar(value=c.lfe)
         self.limiter=tk.StringVar(value=next(k for k,v in LIMITERS.items() if v==c.limiter))
-        self.slot_name=tk.StringVar(value=tr('게임 설정')); self.notice=tk.StringVar(value=tr('슬롯 선택 후 불러오기 · 저장은 선택한 슬롯을 교체합니다.'))
+        self.slot_name=tk.StringVar(value=tr('게임 설정')); self.notice=tk.StringVar(value=tr('사용할 설정을 고르고 불러오세요. 저장하면 선택한 칸을 덮어씁니다.'))
         self.status=tk.StringVar(value=tr('정지 · 기존 BAT를 종료한 후 시작하세요'))
         # Layout: header, source/profile card, two peer cards, connection, footer.
-        outer=tk.Frame(root,bg=BG); outer.pack(fill='both',expand=True,padx=24,pady=12); outer.columnconfigure(0,weight=1); outer.rowconfigure(2,weight=1)
-        head=tk.Frame(outer,bg=BG); head.grid(row=0,column=0,sticky='ew',pady=(0,12))
-        tk.Label(head,text='DS5 LIGHT',bg=BG,fg=ACCENT,font=('Segoe UI',10,'bold')).pack(anchor='w')
-        tk.Label(head,text=tr('오디오햅틱'),bg=BG,fg=FG,font=('맑은 고딕',21,'bold')).pack(side='left',pady=(6,0))
-        tk.Label(head,text=tr('게임 소리는 그대로, 동글로 보내는 복사본만 처리'),bg=BG,fg=MUTED,font=('맑은 고딕',10)).pack(side='left',padx=20,pady=(10,0))
+        self.shared_read_pending=False
+        self.common_bar=ttk.Frame(body,padding=(8,5));self.common_bar.pack(fill='x')
+        self.common_actions=ttk.Frame(self.common_bar);self.common_actions.pack(side='right')
+        self.common_profile=ttk.Frame(body,padding=(10,0,10,2));self.common_profile.pack(fill='x')
+        self.tabs=ttk.Notebook(body);self.tabs.pack(fill='both',expand=True)
+        audio_tab=tk.Frame(self.tabs,bg=BG);remap_tab=ttk.Frame(self.tabs)
+        self.tabs.add(audio_tab,text=tr('오디오햅틱'));self.tabs.add(remap_tab,text='리매핑 · 키 조합' if LANGUAGE=='ko' else 'Remapping · Key combos')
+        outer=tk.Frame(audio_tab,bg=BG); outer.pack(fill='both',expand=True,padx=12,pady=5); outer.columnconfigure(0,weight=1); outer.rowconfigure(2,weight=1)
+        head=tk.Frame(outer,bg=BG); head.grid(row=0,column=0,sticky='ew',pady=(0,4))
+        tk.Label(head,text=tr('오디오햅틱'),bg=BG,fg=FG,font=('맑은 고딕',21,'bold')).pack(side='left')
+        tk.Label(head,text=tr('게임 소리는 그대로, 동글로 보내는 복사본만 처리'),bg=BG,fg=MUTED,font=('맑은 고딕',10)).pack(side='left',padx=20,pady=(6,0))
         self.language_choice=ttk.Combobox(head,values=['한국어','English'],state='readonly',width=10)
         self.language_choice.set('한국어' if LANGUAGE=='ko' else 'English'); self.language_choice.pack(side='right',padx=(12,0))
         self.language_choice.bind('<<ComboboxSelected>>',self.change_language)
         tk.Label(head,text='Language',bg=BG,fg=MUTED,font=('Segoe UI',9)).pack(side='right')
         self.badge=tk.Label(head,text=tr('정지'),bg='#293646',fg=MUTED,padx=12,pady=5); self.badge.pack(side='right')
-        top=self.card(outer); top.grid(row=1,column=0,sticky='ew',pady=(0,12)); top.columnconfigure(0,weight=1,uniform='top'); top.columnconfigure(1,weight=1,uniform='top')
-        source_area=ttk.Frame(top); source_area.grid(row=0,column=0,sticky='nsew',padx=(0,16))
+        top=self.card(outer); top.grid(row=1,column=0,sticky='ew',pady=(0,4)); top.columnconfigure(0,weight=1,uniform='top'); top.columnconfigure(1,weight=1,uniform='top')
+        source_area=ttk.Frame(top); source_area.grid(row=0,column=0,sticky='nsew',padx=(0,10))
         preset_area=ttk.Frame(top); preset_area.grid(row=0,column=1,sticky='nsew')
         ttk.Label(source_area,text=tr('소리 받을 곳'),style='Muted.TLabel').pack(anchor='w')
         radios=ttk.Frame(source_area); radios.pack(fill='x',pady=(4,6)); self.scope_buttons=[]
         for text,value in [(tr('장치 전체'),'device'),(tr('선택한 게임만'),'process')]:
-            b=ttk.Radiobutton(radios,text=text,value=value,variable=self.scope,command=self.render); b.pack(side='left',padx=(0,8)); self.scope_buttons.append(b)
+            b=ttk.Radiobutton(radios,text=text,value=value,variable=self.scope,command=self.render); b.pack(side='left',padx=(0,5)); self.scope_buttons.append(b)
         gr=ttk.Frame(source_area); gr.pack(fill='x')
         self.game=ttk.Combobox(gr,state='disabled',width=23,textvariable=self.game_selection); self.game.pack(side='left',fill='x',expand=True)
         self.game.bind('<<ComboboxSelected>>',self.game_selected)
         self.refresh_button=ttk.Button(gr,text=tr('새로고침'),command=self.refresh_games); self.refresh_button.pack(side='left',padx=(6,0))
         order_row=ttk.Frame(radios);order_row.pack(side='right')
-        ttk.Label(order_row,text='정렬' if LANGUAGE=='ko' else 'Sort',style='Muted.TLabel').pack(side='left',padx=(0,8))
+        ttk.Label(order_row,text='정렬' if LANGUAGE=='ko' else 'Sort',style='Muted.TLabel').pack(side='left',padx=(0,5))
         self.order_box=ttk.Combobox(order_row,values=list(PROCESS_SORT),textvariable=self.process_order,state='readonly',width=13);self.order_box.pack(side='left')
         self.order_box.bind('<<ComboboxSelected>>',lambda e:self.refresh_games())
         ttk.Label(preset_area,text=tr('게임별 프리셋'),style='Muted.TLabel').pack(anchor='w')
@@ -133,16 +153,16 @@ class App:
         self.slot.bind('<<ComboboxSelected>>',self.slot_selected)
         self.load_button=ttk.Button(pr,text=tr('불러오기'),command=self.load_slot); self.load_button.pack(side='left',padx=5)
         ttk.Button(pr,text=tr('저장'),command=self.save_prompt).pack(side='left')
-        ttk.Label(preset_area,textvariable=self.notice,style='Muted.TLabel',wraplength=405,font=('맑은 고딕',9)).pack(anchor='w',pady=(10,0))
+        ttk.Label(preset_area,textvariable=self.notice,style='Muted.TLabel',wraplength=405,font=('맑은 고딕',9)).pack(anchor='w',pady=(6,0))
         cards=tk.Frame(outer,bg=BG); cards.grid(row=2,column=0,sticky='nsew'); cards.columnconfigure(0,weight=1,uniform='cards'); cards.columnconfigure(1,weight=1,uniform='cards'); cards.rowconfigure(0,weight=0); cards.rowconfigure(1,weight=1)
-        left=self.card(cards); left.grid(row=0,column=0,sticky='nsew',padx=(0,8))
-        right=self.card(cards); right.grid(row=1,column=0,sticky='nsew',padx=(0,8),pady=(10,0))
-        studio_card=self.card(cards);studio_card.grid(row=0,column=1,rowspan=2,sticky='nsew',padx=(8,0))
+        left=self.card(cards); left.grid(row=0,column=0,sticky='nsew',padx=(0,5))
+        right=self.card(cards); right.grid(row=1,column=0,sticky='nsew',padx=(0,5),pady=(6,0))
+        studio_card=self.card(cards);studio_card.grid(row=0,column=1,rowspan=2,sticky='nsew',padx=(5,0))
         from studio_ui import StudioWindow
-        self.studio_window=StudioWindow(self,parent=studio_card,auto_read='--preset-test-path' not in sys.argv and '--smoke-test' not in sys.argv)
+        self.studio_window=StudioWindow(self,parent=studio_card,controls_parent=self.common_bar,profile_parent=self.common_profile,auto_read='--preset-test-path' not in sys.argv and '--smoke-test' not in sys.argv)
         ttk.Label(left,text=tr('01   사용할 채널'),font=('맑은 고딕',12,'bold')).pack(anchor='w')
         self.channel_choice=ttk.Combobox(left,values=list(CHANNELS),textvariable=self.channel,state='readonly')
-        self.channel_choice.pack(fill='x',pady=(10,0))
+        self.channel_choice.pack(fill='x',pady=(6,0))
         self.channel_choice.bind('<<ComboboxSelected>>',lambda e:self.render())
         self.channel_note=ttk.Label(left,style='Muted.TLabel',wraplength=390); # Capture format is also shown in the connection summary.
         self.front_label=ttk.Label(left,text=tr('전면 L / R     항상 사용 · 기본 100%')); self.front_label.pack(anchor='w',pady=3)
@@ -155,7 +175,7 @@ class App:
         self.limit_label=ttk.Label(left,text=tr('채널 합산 시 큰 소리가 겹칠 때'),style='Muted.TLabel'); self.limit_label.pack(anchor='w',pady=(8,4))
         self.limiter_box=ttk.Combobox(left,values=list(LIMITERS),textvariable=self.limiter,state='readonly'); self.limiter_box.pack(fill='x')
         self.limiter_box.bind('<<ComboboxSelected>>',lambda e:self.update_controls())
-        self.mix_note=ttk.Label(left,style='Muted.TLabel',wraplength=390,font=('맑은 고딕',9)); self.mix_note.pack(anchor='w',pady=(10,0))
+        self.mix_note=ttk.Label(left,style='Muted.TLabel',wraplength=390,font=('맑은 고딕',9)); self.mix_note.pack(anchor='w',pady=(6,0))
         fh=ttk.Frame(right); fh.pack(fill='x')
         ttk.Label(fh,text=tr('02   PC 억제 필터'),font=('맑은 고딕',12,'bold')).pack(side='left')
         self.filter_switch=Switch(fh,self.filter_on,self.update_controls); self.filter_switch.pack(side='right')
@@ -175,24 +195,31 @@ class App:
         self.advanced=ttk.Frame(right); self.advanced_open=False
         for text,var in [(tr('배경 대역 억제'),self.bg),(tr('변화량 보호'),self.transient)]:
             b=ttk.Checkbutton(self.advanced,text=text,variable=var,command=self.update_controls); b.pack(side='left',padx=(0,12)); self.filter_widgets.append(b)
-        self.filter_note=ttk.Label(right,style='Muted.TLabel',wraplength=390,font=('맑은 고딕',9)); self.filter_note.pack(anchor='w',pady=(12,0))
-        connect=tk.Frame(outer,bg=BG); connect.grid(row=3,column=0,sticky='ew',pady=(10,10))
+        self.filter_note=ttk.Label(right,style='Muted.TLabel',wraplength=390,font=('맑은 고딕',9)); self.filter_note.pack(anchor='w',pady=(7,0))
+        connect=tk.Frame(outer,bg=BG); connect.grid(row=3,column=0,sticky='ew',pady=(6,6))
         # Studio controls are embedded in the main window.
         ttk.Button(connect,text=tr('연결 설정 · 도움말'),command=self.open_connection).pack(side='left')
         self.connection_summary=tk.Label(connect,bg=BG,fg=MUTED,font=('맑은 고딕',9)); self.connection_summary.pack(side='left',padx=13)
         footer=self.card(outer); footer.grid(row=4,column=0,sticky='ew')
-        buttons=ttk.Frame(footer); buttons.pack(side='right')
-        self.stop_button=ttk.Button(buttons,text=tr('정지'),command=self.stop,state='disabled'); self.stop_button.pack(side='left',padx=(0,8))
+        buttons=self.common_actions
+        self.stop_button=ttk.Button(buttons,text=tr('정지'),command=self.stop,state='disabled'); self.stop_button.pack(side='left',padx=(0,5))
         self.start_button=ttk.Button(buttons,text=tr('▶  시작'),command=self.start,style='Accent.TButton',width=11); self.start_button.pack(side='left')
         self.flow=ttk.Label(footer,foreground=ACCENT); self.flow.pack(anchor='w')
         self.status_label=ttk.Label(footer,textvariable=self.status,style='Muted.TLabel',wraplength=620,font=('맑은 고딕',9)); self.status_label.pack(anchor='w',pady=(5,0))
         self.battery=BatteryMonitor()
         battery_row=ttk.Frame(footer);battery_row.pack(anchor='w',fill='x',pady=(5,0))
-        self.battery_icon=BatteryIcon(battery_row,self.battery.refresh,bg=CARD,fg=MUTED,fill=ACCENT);self.battery_icon.pack(side='left',padx=(0,8))
+        self.battery_icon=BatteryIcon(battery_row,self.battery.refresh,bg=CARD,fg=MUTED,fill=ACCENT);self.battery_icon.pack(side='left',padx=(0,5))
         self.battery_label=ttk.Label(battery_row,text=battery_text(self.battery,LANGUAGE),style='Muted.TLabel',font=('맑은 고딕',9),cursor='hand2')
         self.battery_label.pack(side='left')
         self.battery_label.bind('<Button-1>',lambda e:self.battery.refresh())
+        from remap_ui import RemapPanel
+        self.remap_panel=RemapPanel(self,remap_tab)
+        from xbox_ui import XboxUI
+        self.xbox=XboxUI(self,self.common_profile)
+        from task_progress import WorkIndicator
+        self.work_indicator=WorkIndicator(self)
         self.refresh_slots(); self.restore_session(); self.render()
+        root.after_idle(lambda:fit_content(root,body))
         self.session_ready=True
         for var in (self.scope,self.channel,self.source,self.destination,self.mode,self.filter_on,self.strength,self.bg,self.transient,self.center,self.rear,self.lfe,self.limiter,self.process_order):
             var.trace_add('write',self.schedule_session)
@@ -201,6 +228,57 @@ class App:
         root.after(150,self.refresh_games); root.after(1000,self.tick)
     def game_selected(self,event=None):
         self.desired_game=self.game_names.get(self.game.get(),'');self.schedule_session()
+        if self.engine:return
+        identity=self.bind_game()
+        path=identity[0] if identity else None
+        if path==self.last_game_path:return
+        self.last_game_path=path
+        item=self.features.resolve(path,self.store.slots)
+        if item:
+            c=Controls(**item['controls'])
+            self.channel.set(next(k for k,v in CHANNELS.items() if v==item['channels']))
+            self.mode.set(c.mode);self.filter_on.set(not c.bypass);self.strength.set(c.strength*100)
+            self.bg.set(c.background);self.transient.set(c.transient);self.center.set(c.center);self.rear.set(c.rear);self.lfe.set(c.lfe)
+            self.limiter.set(next(k for k,v in LIMITERS.items() if v==c.limiter));self.update_controls()
+            self.notice.set(tr('게임 프리셋 적용 · ')+item['name'])
+    def link_game(self,remove=False):
+        if self.engine:return
+        try:
+            identity=process_identity(self.game_map.get(self.game.get(),0))
+            if not identity:raise ValueError('Executable path unavailable; select a running game')
+            if remove:self.features.unlink(identity[0])
+            else:
+                i=self.slot.current();item=self.store.slots[i]
+                if item is None:raise ValueError('Save a PC preset first')
+                self.features.link(identity[0],i,item)
+            self.notice.set(tr('게임 연결 해제됨') if remove else tr('게임 연결 저장됨 · 다음 선택 때 적용'))
+        except Exception as exc:self.status.set(tr(str(exc)))
+    def delete_slot(self):
+        if self.engine:return
+        try:
+            i=self.slot.current();self.store.delete(i);self.features.prune(self.store.slots);self.refresh_slots(i)
+        except Exception as exc:self.status.set(tr(str(exc)))
+    def configure_shortcut(self):
+        config=self.features.value['shortcut']
+        text=simpledialog.askstring(tr('음소거 단축키'),tr('현재 활성 창으로 전송 · 빈칸은 OFF · 예: CTRL+F13'),initialvalue=config['keys'] if config['enabled'] else '',parent=self.root)
+        if text is None:return
+        try:
+            import copy
+            if text.strip():parse_keys(text)
+            doc=copy.deepcopy(self.features.value);doc['shortcut']={'enabled':bool(text.strip()),'keys':text.strip().upper() or 'F13'}
+            self.features.save(doc);self.shortcut.stop();self.sync_shortcut()
+        except Exception as exc:self.status.set(tr(str(exc)))
+    def sync_shortcut(self):
+        from task_exclusion import management_busy
+        if management_busy(self):self.shortcut.stop();return
+        if getattr(getattr(self,'xbox',None),'worker',None) and self.xbox.worker.alive:
+            self.shortcut.stop();return
+        config=self.features.value['shortcut'];panel=self.studio_window
+        d=panel.device.current();path=panel.paths[d] if 0<=d<len(panel.paths) else None
+        if config['enabled'] and path and not self.closing:
+            try:self.shortcut.start(path,config['keys'])
+            except Exception as exc:self.shortcut.status='단축키 작업 시작 실패: '+str(exc)
+        else:self.shortcut.stop()
     def schedule_session(self,*args):
         if not self.session_ready or '--smoke-test' in sys.argv:return
         if self.session_timer:self.root.after_cancel(self.session_timer)
@@ -212,8 +290,13 @@ class App:
             c=dict(mode=self.mode.get(),bypass=not self.filter_on.get(),strength=self.strength.get()/100,
                    background=self.bg.get(),transient=self.transient.get(),rear=self.rear.get(),lfe=self.lfe.get(),center=self.center.get(),limiter=LIMITERS[self.limiter.get()])
             settings=dict(name='Last settings',game_exe=self.game_names.get(self.game.get(),self.desired_game),scope=self.scope.get(),channels=CHANNELS[self.channel.get()],input=canonical_device(self.source.get()),output=canonical_device(self.destination.get()),controls=c)
-            self.session.save(dict(version=1,settings=settings,sort=PROCESS_SORT[self.process_order.get()],slot=max(0,self.slot.current()),details=self.advanced_open))
-        except Exception as exc:self.status.set(('마지막 설정 저장 실패: ' if LANGUAGE=='ko' else 'Could not save last settings: ')+str(exc))
+            self.session.save(dict(version=2 if settings['channels']==8 or PROCESS_SORT[self.process_order.get()]=='audio' else 1,settings=settings,sort=PROCESS_SORT[self.process_order.get()],slot=max(0,self.slot.current()),details=self.advanced_open))
+        except Exception as exc:
+            self.status.set(('마지막 설정 저장 실패: ' if LANGUAGE=='ko' else 'Could not save last settings: ')+str(exc))
+            if self.closing:
+                from shutdown_cleanup import record_failure
+                self.shutdown_save_recorded=record_failure(exc)
+            return False
     def restore_session(self):
         if '--smoke-test' in sys.argv or not self.session.value:return
         doc=self.session.value;item=doc['settings'];c=Controls(**item['controls'])
@@ -241,7 +324,7 @@ class App:
         except Exception as exc:
             messagebox.showerror(tr('저장 실패'),tr(str(exc)),parent=self.root)
     def card(self,parent):
-        return tk.Frame(parent,bg=CARD,highlightbackground=BORDER,highlightthickness=1,padx=14,pady=10)
+        return tk.Frame(parent,bg=CARD,highlightbackground=BORDER,highlightthickness=1,padx=9,pady=5)
     def capture_channels(self):
         if self.engine: return self.engine.capture_channels
         if self.scope.get()=='process': return CHANNELS[self.channel.get()]
@@ -250,24 +333,71 @@ class App:
     def update_controls(self):
         self.controls=Controls(mode=self.mode.get(),bypass=not self.filter_on.get(),strength=self.strength.get()/100,
             background=self.bg.get(),transient=self.transient.get(),rear=self.rear.get(),lfe=self.lfe.get(),center=self.center.get(),limiter=LIMITERS[self.limiter.get()])
-        if self.engine: self.engine.controls=self.controls
+        if self.engine:
+            if hasattr(self.engine,'request_controls'):self.engine.request_controls(self.controls)
+            else:self.engine.controls=self.controls
         self.render()
+    def prepare_device_read(self):
+        p=self.remap_panel
+        if self.engine or self.studio_window.busy or p.busy:
+            p.status.set('오디오와 현재 작업을 정지한 뒤 조회하세요.');return False
+        if has_pending_edits(p):
+            if not messagebox.askyesno('설정 다시 읽기','아직 적용하지 않은 버튼 편집을 버리고 장치 설정을 읽을까요?',parent=self.root):return False
+            p.revert()
+        p.stop_preview();self.shared_read_pending=True
+        return True
+    def refresh_device(self):
+        if self.prepare_device_read():self.studio_window.discover()
+    def load_device_profile(self):
+        if self.prepare_device_read():
+            self.studio_window.activate()
+            if not self.studio_window.busy:self.shared_read_pending=False
+    def finish_device_read(self):
+        if not self.shared_read_pending or self.studio_window.busy:return
+        panel=self.studio_window
+        if not panel.connected or panel.profile is None:
+            self.shared_read_pending=False;return
+        if self.shared_read_pending is True:
+            # Complete the option query before starting the remapping transaction.
+            self.shared_read_pending='remap'
+            settings=getattr(panel,'settings_dialog',None)
+            if settings is not None:
+                settings.read()
+                if panel.busy:return
+        self.shared_read_pending=False
+        self.remap_panel.read()
+
+    def update_common_controls(self):
+        if not hasattr(self,'remap_panel'):return
+        p=self.studio_window;busy=p.busy or self.remap_panel.busy or bool(self.engine)
+        p.refresh.configure(state='disabled' if busy else 'normal')
+        if busy:
+            p.apply.configure(state='disabled');p.choice.configure(state='disabled');p.device.configure(state='disabled')
+        else:
+            p.device.configure(state='readonly');p.choice.configure(state='readonly' if p.slots else 'disabled');p.selection()
+        self.start_button.configure(state='disabled' if busy or self.games_busy else 'normal')
+        if hasattr(self,'stop_button'):self.stop_button.configure(state='normal' if self.engine or restart_pending(self) else 'disabled')
+
     def render(self):
+        self.update_common_controls()
+        if hasattr(self,'remap_panel'):self.remap_panel.update_availability()
         ch=self.capture_channels(); active=bool(self.engine); filtering=self.filter_on.get()
-        if self.scope.get()=='device' and ch in (2,6):
+        if self.scope.get()=='device' and ch in (2,6,8):
             self.device_channel_cache[self.source.get()]=ch
             self.channel.set(next(k for k,v in CHANNELS.items() if v==ch))
         state=(ch,active,filtering,self.scope.get(),self.channel.get(),self.source.get(),self.destination.get(),self.mode.get(),round(self.strength.get(),3),self.rear.get(),self.lfe.get(),self.center.get(),self.limiter.get())
         if state==self.last_render: return
         self.last_render=state
-        available=ch==6 or ch is None and CHANNELS[self.channel.get()]==6
+        available=ch in (6,8) or ch is None and CHANNELS[self.channel.get()] in (6,8)
         for sw in self.mix_switches: sw.set_enabled(available)
         for lab in self.channel_labels+[self.limit_label]: lab.configure(foreground=FG if available else DISABLED)
         self.limiter_box.configure(state='readonly' if available else 'disabled')
         note=(tr('6ch 입력 · 센터 포함') if self.center.get() else tr('6ch 입력 · 센터 제외')) if available else tr('2ch 입력 · 좌우 스테레오') if ch==2 else tr(f'{ch}ch 입력 · 채널 추가 미지원') if ch else tr('입력 채널 · 시작 후 확인')
+        self.channel_labels[0].configure(text=tr('후방·측면 합산') if ch==8 else tr('후방 L / R'))
         self.channel_note.configure(text=(self.channel.get()+tr(' 준비 · 실제 형식은 시작 후 확인') if ch is None else tr('2채널 선택 · 전면 L/R만 사용') if CHANNELS[self.channel.get()]==2 else tr('5.1채널 선택 · 후방/센터/LFE 추가 가능') if available else tr('5.1채널 선택 · 6ch 입력 연결 대기'))+'')
-        choices=[next(k for k,v in CHANNELS.items() if v==ch)] if self.scope.get()=='device' and ch in (2,6) else list(CHANNELS)
-        self.channel_choice.configure(values=choices,state='disabled' if active or self.scope.get()=='device' and ch not in (2,6) else 'readonly')
+        if ch==8:self.channel_note.configure(text=tr('7.1 선택 · 후방·측면 고정 평균 / 배치 0x63f 확인 필요'))
+        choices=[next(k for k,v in CHANNELS.items() if v==ch)] if self.scope.get()=='device' and ch in (2,6,8) else list(CHANNELS)
+        self.channel_choice.configure(values=choices,state='disabled' if active or self.scope.get()=='device' and ch not in (2,6,8) else 'readonly')
         self.front_label.configure(text=tr('전면 L / R     항상 사용 · 기본 100%') if available else tr('입력 L / R     항상 사용'))
         self.mix_note.configure(text=tr('대사에 진동이 생기면 센터를 꺼 보세요.\nBGM 저음의 진동이 거슬리면 LFE를 꺼 보세요.') if available else tr('2채널은 추가 채널 합산이 없어 합산 제한을 사용하지 않습니다.\n5.1채널로 돌아오면 저장된 선택을 다시 사용합니다.') if ch==2 else tr('실제 입력이 표준 6ch일 때만 사용할 수 있습니다.\n자동 장치는 시작 후 Windows 캡처 형식을 확인합니다.'))
         self.filter_badge.configure(text=tr('켜짐') if filtering else tr('꺼짐'),foreground=ACCENT if filtering else MUTED)
@@ -280,7 +410,7 @@ class App:
         self.refresh_button.configure(state='normal' if self.scope.get()=='process' and not active and not self.games_busy else 'disabled')
         self.order_box.configure(state='disabled' if active or self.games_busy else 'readonly')
         self.load_button.configure(state='disabled' if active else 'normal')
-        self.start_button.configure(state='disabled' if active or self.games_busy else 'normal'); self.stop_button.configure(state='normal' if active else 'disabled')
+        self.start_button.configure(state='disabled' if active or self.games_busy or self.studio_window.busy or self.remap_panel.busy else 'normal'); self.stop_button.configure(state='normal' if active or restart_pending(self) else 'disabled')
         route=tr('선택 게임') if self.scope.get()=='process' else tr('장치 전체')
         self.flow.configure(text=tr(f'{route} → 채널 선택 → PC 필터 ')+(tr('켜짐') if filtering else tr('꺼짐'))+' → Studio' if self.mode.get()=='normal' else tr('퓨어 미지원 · 추가 오디오 출력 무음'))
         self.connection_summary.configure(text=tr(f"{'일반 모드' if self.mode.get()=='normal' else '퓨어 · 무음'}   ·   {self.channel.get()} · 캡처 {self.engine.capture_channels if self.engine and self.engine.capture_channels else '대기'}ch   ·   출력: ")+(tr('자동 선택') if self.destination.get()==AUTO else self.destination.get()[:28]))
@@ -290,19 +420,23 @@ class App:
     def toggle_details(self):
         self.schedule_session()
         self.advanced_open=not self.advanced_open
-        if self.advanced_open: self.advanced.pack(fill='x',after=self.details_button,pady=(10,0))
+        if self.advanced_open: self.advanced.pack(fill='x',after=self.details_button,pady=(6,0))
         else: self.advanced.pack_forget()
         self.details_button.configure(text=tr('세부 필터 설정 ▾') if self.advanced_open else tr('세부 필터 설정 ▸'))
     def refresh_games(self):
-        if self.games_busy or self.engine:return
+        if self.closing or self.games_busy or self.engine:return
+        self.games_started=time.monotonic()
         self.games_busy=True;self.refresh_button.configure(state='disabled');self.order_box.configure(state='disabled')
         self.game.configure(state='disabled');self.start_button.configure(state='disabled')
         order=PROCESS_SORT[self.process_order.get()]
         def work():
             try:self.games_queue.put((process_list(order),None))
             except Exception as exc:self.games_queue.put((None,str(exc)))
-        threading.Thread(target=work,daemon=True).start();self.root.after(100,self.finish_games)
+        try:threading.Thread(target=work,daemon=True).start()
+        except Exception as exc:self.games_queue.put((None,'작업 시작 실패: '+str(exc)))
+        self.root.after(100,self.finish_games)
     def finish_games(self):
+        if self.closing:return
         try:rows,error=self.games_queue.get_nowait()
         except queue.Empty:self.root.after(100,self.finish_games);return
         self.games_busy=False
@@ -312,7 +446,8 @@ class App:
         else:
             selected=self.game_map.get(self.game.get());selected_name=self.game_names.get(self.game.get());self.game_map.clear();self.game_names.clear()
             for name,pid,cpu in rows:
-                suffix='' if PROCESS_SORT[self.process_order.get()]=='name' else (' · CPU —' if cpu is None else f' · CPU {cpu:.1f}%')
+                suffix='' if PROCESS_SORT[self.process_order.get()]=='name' else (' · CPU —' if cpu is None else f' · CPU {cpu:.1f}%') if PROCESS_SORT[self.process_order.get()]!='audio' else ''
+                if PROCESS_SORT[self.process_order.get()]=='audio':suffix=' · '+tr({'signal':'신호 관측','silent':'활성 세션 · 무신호','none':'활성 세션 없음','unknown':'조회 불가'}.get(cpu,'조회 불가'))
                 key=f'{name} · PID {pid}'+suffix;self.game_map[key]=pid;self.game_names[key]=name
             self.game.configure(values=list(self.game_map));self.game.set('')
             if any(v==selected and self.game_names[k]==selected_name for k,v in self.game_map.items()):self.game.set(next(k for k,v in self.game_map.items() if v==selected and self.game_names[k]==selected_name))
@@ -321,6 +456,14 @@ class App:
                 self.game.set(next((k for k,v in self.game_map.items() if v==pid),''))
                 if pid is None:self.status.set(self.desired_game+tr(' · 미실행 또는 같은 이름이 여러 개입니다. 실행 후 새로고침/직접 선택하세요.'))
         self.last_render=None;self.render()
+        self.bind_game()
+    def bind_game(self):
+        import ntpath
+        key=self.game.get();pid=self.game_map.get(key)
+        identity=process_identity(pid) if pid else None
+        if identity and ntpath.basename(identity[0]).casefold()!=self.game_names.get(key,'').casefold():identity=None
+        self.selected_process=(pid,identity)
+        return identity
     def refresh_slots(self,index=0):
         self.slot.configure(values=[f'{i+1:02d} · '+(item['name'] if item else tr('빈 슬롯')) for i,item in enumerate(self.store.slots)]); self.slot.current(index)
     def slot_selected(self,event=None):
@@ -333,6 +476,7 @@ class App:
             self.update_controls(); i=self.slot.current()
             self.store.save(i,dict(name=self.slot_name.get(),game_exe=self.game_names.get(self.game.get(),self.desired_game),
                 scope=self.scope.get(),channels=CHANNELS[self.channel.get()],input=canonical_device(self.source.get()),output=canonical_device(self.destination.get()),controls=asdict(self.controls)))
+            self.features.prune(self.store.slots)
             self.refresh_slots(i); self.notice.set(tr(f'{i+1:02d}번 저장됨 · ')+self.slot_name.get())
         except Exception as exc: messagebox.showerror(tr('프리셋 저장 실패'),tr(str(exc)),parent=self.root)
     def load_slot(self):
@@ -353,6 +497,9 @@ class App:
         win=tk.Toplevel(self.root); self.connection=win; win.title(tr('연결 설정 · 도움말')); win.configure(bg=CARD); win.geometry('660x660'); win.transient(self.root)
         area=ttk.Frame(win,padding=24); area.pack(fill='both',expand=True)
         ttk.Label(area,text=tr('연결 설정'),font=('맑은 고딕',15,'bold')).pack(anchor='w',pady=(0,15))
+        actions=ttk.Frame(area);actions.pack(fill='x')
+        for text,command in [(tr('게임 연결'),self.link_game),(tr('연결 해제'),lambda:self.link_game(True)),(tr('슬롯 삭제'),self.delete_slot),(tr('음소거 단축키'),self.configure_shortcut)]:
+            ttk.Button(actions,text=text,command=command).pack(side='left',padx=2)
         self.conn_widgets={}
         for label,var,values,key in [(tr('입력 · 장치 전체에서 사용'),self.source,self.inputs,'source'),(tr('출력 · DualSense'),self.destination,self.outputs,'output'),(tr('처리할 채널 · 메인 화면과 동일'),self.channel,list(CHANNELS),'channel')]:
             ttk.Label(area,text=label,style='Muted.TLabel').pack(anchor='w',pady=(10,6))
@@ -367,11 +514,16 @@ class App:
             enabled=not active and (key=='output' or key=='source' and self.scope.get()=='device' or key=='channel')
             if key=='channel':
                 ch=self.capture_channels()
-                w.configure(values=[next(k for k,v in CHANNELS.items() if v==ch)] if self.scope.get()=='device' and ch in (2,6) else list(CHANNELS))
-                enabled=enabled and (self.scope.get()=='process' or ch in (2,6))
+                w.configure(values=[next(k for k,v in CHANNELS.items() if v==ch)] if self.scope.get()=='device' and ch in (2,6,8) else list(CHANNELS))
+                enabled=enabled and (self.scope.get()=='process' or ch in (2,6,8))
             w.configure(state='readonly' if enabled else 'disabled')
     def start(self):
-        if self.games_busy:return
+        from task_exclusion import management_busy
+        if management_busy(self):
+            self.status.set('Xbox 시작·종료 또는 드라이버 관리 작업이 끝난 뒤 진행하세요.');return
+        if self.closing or self.games_busy:return
+        if getattr(getattr(self,'remap_panel',None),'busy',False):
+            self.status.set('리매핑 작업 완료 후 시작하세요.');return
         panel=getattr(self,'studio_window',None)
         if panel is not None and panel.busy:
             self.status.set('Studio '+('작업 완료 후 시작하세요.' if LANGUAGE=='ko' else 'operation in progress. Wait before starting.'));return
@@ -381,30 +533,101 @@ class App:
         pid=self.game_map.get(self.game.get()) if self.scope.get()=='process' else None
         if self.scope.get()=='process' and not pid:
             messagebox.showerror(tr('게임 선택'),tr('게임을 실행하고 새로고침 후 실제 게임 exe를 선택하세요.'),parent=self.root); return
+        expected=None
+        if pid:
+            selected,expected=getattr(self,'selected_process',(None,None))
+            if selected!=pid or expected is None or process_identity(pid)!=expected:
+                self.status.set('선택한 게임이 종료되었거나 변경되었습니다. 목록을 새로고침하고 다시 선택하세요.');return
+        preview=getattr(self,'remap_panel',None)
+        if preview is not None and preview.stop_preview() is False:
+            self.status.set('입력 테스트 종료가 확인되지 않았습니다. 잠시 후 다시 시작하세요.');return
         self.update_controls()
-        candidate=Engine(None if self.source.get()==AUTO else self.source.get(),None if self.destination.get()==AUTO else self.destination.get(),self.controls,process_pid=pid,process_channels=CHANNELS[self.channel.get()])
+        candidate=Engine(None if self.source.get()==AUTO else self.source.get(),None if self.destination.get()==AUTO else self.destination.get(),self.controls,process_pid=pid,process_channels=CHANNELS[self.channel.get()],studio_path=panel.paths[panel.device.current()] if panel and 0<=panel.device.current()<len(panel.paths) else None,expected_process=expected)
         try:
             candidate.start(); self.engine=candidate; self.status.set(tr('연결 중…')); self.render()
         except Exception as exc: messagebox.showerror(tr('시작 실패'),tr(str(exc)),parent=self.root)
     def stop(self):
-        if self.engine:
-            if not self.engine.stop(): self.status.set(tr('정지 대기 중 · 드라이버 응답을 기다립니다.')); return False
-            self.engine=None
-        self.status.set(tr('정지')); self.render(); return True
+        self.intent_generation+=1
+        panel=getattr(self,'studio_window',None)
+        if panel:panel.cancel_pending()
+        if not self.engine:return True
+        self.engine.stop_event.set()
+        if not self.stopping:
+            self.stopping=True
+        self.status.set(tr('정지 대기 중 · 드라이버 응답을 기다립니다.'))
+        return False
+    def close(self):
+        if not self.closing:
+            from shutdown_cleanup import CaptureCleanup
+            self.shutdown_started=time.monotonic();self.shutdown_detail='진행 중인 작업을 정리합니다.'
+            self.capture_cleanup=CaptureCleanup();self.temporary_cleanup=CaptureCleanup(temporary=True);self.closing=True
+            if hasattr(self,'work_indicator'):self.work_indicator.update()
+            preview=getattr(self,'remap_panel',None)
+            if preview is not None:preview.stop_preview()
+            self.stop();self.shortcut.stop();self.battery.close()
+            if hasattr(self,'xbox'):self.xbox.close()
+            self.studio_window.cancel_pending()
+        if hasattr(self,'work_indicator'):self.work_indicator.update()
+        if self.engine and self.engine.thread and self.engine.thread.is_alive():
+            self.shutdown_detail='오디오 출력과 캡처 종료 중 · 오디오 장치 응답 대기'
+            self.root.after(100,self.close);return
+        if self.studio_window.busy or getattr(getattr(self,'remap_panel',None),'busy',False):
+            self.shutdown_detail='장치 설정·프로필 작업이 끝나기를 기다립니다.'
+            self.root.after(100,self.close);return
+        if hasattr(self,'xbox') and (self.xbox.worker.alive or self.xbox.busy):
+            detail=getattr(self.xbox,'latest_progress',self.xbox.worker.status) if self.xbox.busy else getattr(self.xbox.worker,'progress_text',self.xbox.worker.status)
+            self.shutdown_detail='Xbox·관리 작업 종료 대기: '+str(detail)
+            self.xbox.tick();self.root.after(100,self.close);return
+        self.shutdown_detail='가상 패드·원본 숨김 복구 확인 중'
+        if hasattr(self,'xbox') and not self.xbox.finish_close():
+            self.root.after(100,self.close);return
+        self.shutdown_detail='임시 리맵을 원래 설정으로 복원 중'
+        if hasattr(self,'temporary_cleanup') and not self.temporary_cleanup.finish(self.root):
+            self.root.after(100,self.close);return
+        self.shutdown_detail='남은 게임 오디오 캡처 정리 중'
+        if not self.capture_cleanup.finish(self.root):
+            self.root.after(100,self.close);return
+        self.shutdown_detail='마지막 설정 저장 중'
+        if hasattr(self,'work_indicator'):
+            self.work_indicator.update();self.root.update_idletasks()
+        if self.save_session() is False:
+            note=' 오류 기록도 저장하지 못했습니다. 화면 내용을 보관하세요.' if getattr(self,'shutdown_save_recorded',True) is False else ''
+            if messagebox.askretrycancel('종료 전 설정 저장 실패','마지막 설정을 저장하지 못했습니다.'+note+' 다시 시도할까요?\n취소하면 저장하지 않고 종료합니다.',parent=self.root):
+                self.root.after(100,self.close);return
+        self.close_callback()
     def tick(self):
+        if hasattr(self,'work_indicator'):self.work_indicator.update()
+        if hasattr(self,'xbox'):self.xbox.tick()
+        self.update_common_controls()
+        if hasattr(self,'remap_panel'):self.remap_panel.update_availability()
+        if self.closing:return
+        if self.engine and self.engine.thread and not self.engine.thread.is_alive():
+            self.last_engine_stats=self.engine.stats()
+            self.status.set(tr(self.engine.status));self.engine=None;self.stopping=False;self.last_render=None;self.render()
+        panel=self.studio_window
+        if self.engine and self.engine.guard:
+            guard=self.engine.guard
+            observation=(id(self.engine),guard.revision,guard.connection)
+            if observation!=getattr(self,'guard_observation',None):
+                if not panel.busy and not self.remap_panel.busy:
+                    from guard_ui_sync import sync
+                    sync(panel,guard);self.guard_observation=observation
         # Reuse this existing timer. Battery workers only run every 5 min.
         panel=getattr(self,'studio_window',None);preferred=self.battery.preferred;panel_busy=False
         if panel is not None and panel.win.winfo_exists():
             panel_busy=panel.busy;d=panel.device.current()
             if 0<=d<len(panel.paths):preferred=panel.paths[d]
-        self.battery.tick(paused=self.root.state()=='iconic' or panel_busy or '--smoke-test' in sys.argv,preferred=preferred)
+        from task_exclusion import management_busy
+        self.battery.tick(paused=management_busy(self) or self.root.state()=='iconic' or panel_busy or '--smoke-test' in sys.argv,preferred=preferred)
         if self.root.state()!='iconic':
             text=battery_text(self.battery,LANGUAGE)
             if self.battery_label.cget('text')!=text:self.battery_label.configure(text=text)
             self.battery_icon.show(self.battery)
         # No animation or live plots; no hidden/minimized statistics work.
         if self.engine and self.root.state()!='iconic':
-            self.status.set(tr(self.engine.status)); self.render()
+            self.status.set(tr(self.engine.status)+f' · {self.engine.capture_channels}ch / mask {self.engine.capture_layout!s}'); self.render()
+        if self.features.value['shortcut']['enabled'] and self.root.state()!='iconic':
+            self.notice.set(tr('음소거 단축키')+' · '+tr(self.shortcut.status))
         self.root.after(1000,self.tick)
 
 
@@ -437,11 +660,12 @@ def smoke(app,report):
     def bounds(widget):
         for child in widget.winfo_children():
             if child.winfo_viewable() and not isinstance(child,tk.Toplevel):
-                x=child.winfo_rootx()-app.root.winfo_rootx(); y=child.winfo_rooty()-app.root.winfo_rooty()
-                if x<0 or y<0 or x+child.winfo_width()>app.root.winfo_width()+1 or y+child.winfo_height()>app.root.winfo_height()+1:
+                x=child.winfo_rootx()-app.viewport.body.winfo_rootx(); y=child.winfo_rooty()-app.viewport.body.winfo_rooty()
+                if x<0 or y<0 or x+child.winfo_width()>app.viewport.body.winfo_width()+1 or y+child.winfo_height()>app.viewport.body.winfo_height()+1:
                     clipped.append(str(child))
                 bounds(child)
-    bounds(app.root)
+    bounds(app.viewport.body)
+    results['scrollable_content_fits']=app.viewport.body.winfo_height()>=app.viewport.body.winfo_reqheight()
     results['widgets_outside_window']=clipped
     app.open_connection(); app.root.update_idletasks()
     app.scope.set('process'); app.render()
@@ -452,7 +676,7 @@ def smoke(app,report):
     results.update(language=LANGUAGE,controls=asdict(app.controls),tk_window_created=True,audio_started=False,width=app.root.winfo_width(),height=app.root.winfo_height(),requested_height=app.root.winfo_reqheight(),inputs=app.inputs,outputs=app.outputs,preset_slots=SLOT_COUNT)
     app.open_studio(); app.root.update_idletasks()
     panel=app.studio_window
-    results['process_sort_options']=set(PROCESS_SORT.values())=={'name','cpu'}
+    results['process_sort_options']=set(PROCESS_SORT.values())=={'name','cpu','audio'}
     results['battery_label_present']=app.battery_label.winfo_exists()==1
     results['studio_panel_embedded']=panel.embedded and not isinstance(panel.win,tk.Toplevel)
     results['studio_strength_order']=panel.strength_order==['gain','intensity','trigger']
@@ -471,6 +695,8 @@ def smoke(app,report):
 
 
 def main():
+    from ui_viewport import enable_dpi_scaling
+    enable_dpi_scaling()
     root=tk.Tk(); lock=None
     try:
         lock=InstanceLock(); app=App(root)
@@ -480,10 +706,8 @@ def main():
         else: messagebox.showerror(tr('실행 실패'),tr(str(exc)),parent=root)
         if lock: lock.close()
         root.destroy(); return
-    def close():
-        if app.studio_window.busy:
-            app.status.set('Studio 작업 완료 후 종료하세요.' if LANGUAGE=='ko' else 'Wait for the Studio operation before closing.');return
-        if app.stop(): app.save_session(); lock.close(); root.destroy()
+    app.close_callback=lambda:(lock.close(),root.destroy())
+    def close():app.close()
     root.protocol('WM_DELETE_WINDOW',close)
     if '--smoke-test' in sys.argv:
         report=Path(sys.argv[sys.argv.index('--smoke-test')+1])

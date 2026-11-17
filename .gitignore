@@ -2,8 +2,14 @@
 __pycache__/
 build/
 dist*/
+work/
 reports/
 *.exe
+*.dll
+*.lib
 *.zip
 *.spec
 .env*
+vendor/vigem/DS5LightClient-source/
+vendor/vigem/DS5LightClient-notices/
+vendor/vigem/DS5LightClient-manifest.json

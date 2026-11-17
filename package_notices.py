@@ -30,7 +30,13 @@ def collect(exe,target):
             dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,dst)
     for name in ('Apache-2.0.txt','PortAudio-LICENSE.txt','Tcl-8.6.15-license.terms','OpenSSL-3-LICENSE.txt','zlib-LICENSE.txt','Python-3.12.10-CRT-LICENSE.txt','manifest.json'):
         dst=target/'upstream'/name;dst.parent.mkdir(parents=True,exist_ok=True)
-        shutil.copy2(Path('licenses/upstream')/name,dst)
+        source=Path('licenses/upstream')/name
+        if name=='manifest.json' and not source.exists():
+            # Portable handoffs may omit metadata; never omit the license texts.
+            entries=[dict(file=p.name,sha256=hashlib.sha256(p.read_bytes()).hexdigest())
+                     for p in sorted(Path('licenses/upstream').glob('*')) if p.is_file()]
+            dst.write_text(json.dumps(dict(note='Inventory regenerated from supplied license texts; not a new rights determination',files=entries),indent=2),encoding='utf8')
+        else:shutil.copy2(source,dst)
     shutil.copytree('licenses/PyAudioWPatch-0.2.12.8',target/'PyAudioWPatch-source-notices',dirs_exist_ok=True)
     binaries=[]
     for p in (exe.parent/'_internal').rglob('*'):

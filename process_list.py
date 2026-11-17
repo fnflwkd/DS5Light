@@ -57,7 +57,38 @@ def rank(rows,before,after,seconds,cores):
 def process_list(order='name'):
     rows=[r for r in processes() if r[1]!=os.getpid()]
     if order=='name':return [(name,pid,None) for name,pid in rows]
+    if order=='audio':
+        from windows_audio import snapshot
+        return rank_audio(rows,snapshot())
     if order!='cpu':raise ValueError('Unknown process sort order')
     start=time.perf_counter();before=cpu_times(rows);time.sleep(.5)
     after=cpu_times(rows);elapsed=time.perf_counter()-start
     return rank(rows,before,after,elapsed,os.cpu_count() or 1)
+
+
+def rank_audio(rows, snapshot):
+    result=[]
+    for name,pid in rows:
+        session=snapshot['sessions'].get(pid)
+        peak=session.get('peak') if session else None
+        state=('signal' if peak is not None and peak>0 else 'silent' if peak==0 else 'unknown') if session else ('none' if snapshot['complete'] else 'unknown')
+        result.append((name,pid,state))
+    order={'signal':0,'silent':1,'none':2,'unknown':3}
+    return sorted(result,key=lambda row:(order[row[2]],row[0].casefold(),row[1]))
+
+def process_identity(pid):
+    k=ctypes.WinDLL('kernel32',use_last_error=True)
+    k.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD];k.OpenProcess.restype=wintypes.HANDLE
+    k.QueryFullProcessImageNameW.argtypes=[wintypes.HANDLE,wintypes.DWORD,wintypes.LPWSTR,ctypes.POINTER(wintypes.DWORD)]
+    k.CloseHandle.argtypes=[wintypes.HANDLE]
+    h=k.OpenProcess(0x1000,False,pid)
+    if not h:return None
+    try:
+        size=wintypes.DWORD(32768);buf=ctypes.create_unicode_buffer(size.value)
+        if not k.QueryFullProcessImageNameW(h,0,buf,ctypes.byref(size)):return None
+        # Query path and creation time through the same handle, even if PID is reused.
+        k.GetProcessTimes.argtypes=[wintypes.HANDLE]+[ctypes.POINTER(wintypes.FILETIME)]*4
+        created,exited,kernel,user=(wintypes.FILETIME() for _ in range(4))
+        if not k.GetProcessTimes(h,ctypes.byref(created),ctypes.byref(exited),ctypes.byref(kernel),ctypes.byref(user)):return None
+        return (os.path.normcase(buf.value),(created.dwHighDateTime<<32)|created.dwLowDateTime)
+    finally:k.CloseHandle(h)

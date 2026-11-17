@@ -1,0 +1,12 @@
+HidHide 1.5.230 (official signed x64 installer)
+Source: https://github.com/nefarius/HidHide/releases/tag/v1.5.230.0
+Installer: HidHide_1.5.230_x64.exe
+SHA256: f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6
+Size: 8078016 bytes
+Publisher signature checked: Valid, Nefarius Software Solutions e.U.
+License: MIT, see LICENSE (upstream repository).
+The driver installer is bundled unchanged. No driver was installed during development.
+DS5Light hidhide.py uses the documented control-device IOCTL protocol and UTF-16 lists.
+Protocol reference: HidHideCLI/src/FilterDriverProxy.cpp (v1.5.230.0), (c) Eric Korff de Gidts, MIT.
+https://docs.nefarius.at/projects/HidHide/API-Documentation/
+Installer switches verified against microsoft/winget-pkgs Nefarius.HidHide 1.5.230 manifest.

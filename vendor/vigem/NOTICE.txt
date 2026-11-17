@@ -1,0 +1,18 @@
+DS5Light local Xbox-only client (2026-11-16)
+Runtime: DS5LightViGEmClient.dll, built from upstream MIT source commit
+b66d02d57e32cc8595369c53418b843e958649b4 with joined Xbox notification shutdown.
+This modified client is not an official signed Nefarius release.
+Source, build instructions, source/DLL hashes and runtime notices are included in
+DS5LightClient-source/, DS5LightClient-manifest.json and DS5LightClient-notices/.
+The original ViGEmClient.dll described below is archived in development work/ only; it is no longer distributed.
+The official driver installer and its signature/hash checks are unchanged.
+
+ViGEmClient x64 DLL: MIT, Benjamin Hoeglinger-Stelzer.
+Upstream: https://github.com/nefarius/ViGEmClient
+Binary obtained without running setup from PyPI vgamepad 0.2.0 source archive:
+https://files.pythonhosted.org/packages/06/a5/990701a89ea8d7528a269c2be1ba71d888de38a762a1b0f8d8eae4c2be62/vgamepad-0.2.0.tar.gz
+Archive SHA256: 6ac247e6441e194a0277b46f6f9abc02d7995de5ed8dc495b67eddd214364a88
+Only client/x64/ViGEmClient.dll taken from vgamepad; its Python code and installer are not included. The official driver setup below is obtained directly from its release.
+Official ViGEmBus 1.22.0 setup is bundled separately (BSD-3-Clause; see ViGEmBus-LICENSE.txt). It runs only after explicit user approval:
+https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0
+No installer/updater is run at app startup or build time.

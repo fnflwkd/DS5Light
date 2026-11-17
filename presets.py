@@ -19,7 +19,7 @@ def validate(value):
             raise ValueError('프리셋 문자열 오류: '+key)
     if not value['name'].strip() or len(value['name']) > 60:
         raise ValueError('슬롯 이름은 1~60자로 입력하세요')
-    if value['scope'] not in ('device', 'process') or type(value['channels']) is not int or value['channels'] not in (2, 6):
+    if value['scope'] not in ('device', 'process') or type(value['channels']) is not int or value['channels'] not in (2, 6, 8):
         raise ValueError('캡처 범위/채널 오류')
     c = value['controls']
     required = {'mode', 'bypass', 'strength', 'background', 'transient'}
@@ -52,7 +52,7 @@ class PresetStore:
         try:
             if self.path.exists():
                 doc = json.loads(self.path.read_text(encoding='utf-8'))
-                if doc.get('version') not in (1,2,3,4) or not isinstance(doc.get('slots'), list) or len(doc['slots']) != SLOT_COUNT:
+                if not isinstance(doc,dict) or type(doc.get('version')) is not int or doc.get('version') not in (1,2,3,4,5) or not isinstance(doc.get('slots'), list) or len(doc['slots']) != SLOT_COUNT:
                     raise ValueError('지원하지 않는 프리셋 파일 형식')
                 for item in doc['slots']:
                     if item is not None:
@@ -64,15 +64,15 @@ class PresetStore:
     def save(self, index, value):
         if self.error:
             raise ValueError('기존 파일을 읽지 못해 덮어쓰기를 막았습니다: '+self.error)
-        if not 0 <= index < SLOT_COUNT:
+        if type(index) is not int or not 0 <= index < SLOT_COUNT:
             raise ValueError('슬롯 번호 오류')
-        validate(value)
+        if value is not None:validate(value)
         slots = list(self.slots)
         slots[index] = json.loads(json.dumps(value, allow_nan=False))
-        payload = json.dumps({'version': 4, 'slots': slots}, ensure_ascii=False, indent=2)
+        payload = json.dumps({'version': 5 if any(s and s['channels']==8 for s in slots) else 4, 'slots': slots}, ensure_ascii=False, indent=2)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         old_version=json.loads(self.path.read_text(encoding='utf-8')).get('version') if self.path.exists() else None
-        if old_version in (1,2,3):
+        if old_version in (1,2,3) or old_version==4 and any(s and s['channels']==8 for s in slots):
             backup=self.path.with_name(self.path.stem+f'.v{old_version}.backup.json')
             if not backup.exists():
                 with backup.open('xb') as f: f.write(self.path.read_bytes())
@@ -88,3 +88,6 @@ class PresetStore:
         finally:
             if name and Path(name).exists():
                 Path(name).unlink()
+
+    def delete(self,index):
+        self.save(index,None)

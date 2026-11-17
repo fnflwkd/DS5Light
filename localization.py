@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from translations import EN
+from translations import EN, STATUS_KO
 
 AUTO_KO = '자동 선택 · 기존 BAT 방식'
 
@@ -52,7 +52,10 @@ if LANGUAGE not in ('ko','en'): LANGUAGE=system_language()
 ORDERED = sorted(EN,key=len,reverse=True)
 
 def tr(text):
-    if LANGUAGE=='ko': return text
+    if LANGUAGE=='ko':
+        for key in sorted(STATUS_KO,key=len,reverse=True):
+            if key in text:text=text.replace(key,STATUS_KO[key])
+        return text.replace('동글','Pico 2 W')
     if text in EN: return EN[text]
     # Dynamic messages contain device names / numbers; translate known fragments only.
     for key in ORDERED:

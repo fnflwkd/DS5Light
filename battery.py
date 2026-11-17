@@ -12,37 +12,50 @@ class BatteryMonitor:
         self.queue=queue.Queue();self.busy=False;self.next_check=0;self.last_read=None
         self.path=None;self.preferred=None;self.value=None;self.sampled_at=None
         self.state='waiting';self.force=False
+        self.closed=threading.Event();self.generation=0
+    def close(self):
+        self.closed.set()
     def refresh(self):
         self.force=True;self.next_check=0
     def tick(self,paused=False,preferred=None):
+        if self.closed.is_set():return
+        if preferred!=self.preferred:
+            self.generation+=1
+            self.preferred=preferred;self.force=True
+            self.path=None;self.value=None;self.sampled_at=None;self.last_read=None;self.state='waiting'
         try:result=self.queue.get_nowait()
         except queue.Empty:pass
         else:
             self.busy=False
-            self.path,self.state,self.value,self.sampled_at,self.last_read=result
-            self.next_check=self.clock()+self.PRESENCE_INTERVAL
+            generation,sample=result
+            if generation==self.generation:
+                self.path,self.state,self.value,self.sampled_at,self.last_read=sample
+                self.next_check=self.clock()+self.PRESENCE_INTERVAL
         if paused or self.busy:return
         now=self.clock()
-        if preferred!=self.preferred:
-            self.preferred=preferred;self.force=True
         if now<self.next_check and not self.force:return
         path=self.path;last=self.last_read;value=self.value;sampled=self.sampled_at;state=self.state
-        force=self.force;self.force=False;self.busy=True
+        force=self.force;self.force=False;self.busy=True;generation=self.generation
         def work():
             try:
+                if self.closed.is_set():return
                 candidates=[d['path'] for d in self.enumerate()]
                 selected=preferred if preferred in candidates else (candidates[0] if len(candidates)==1 and preferred is None else None)
                 if selected is None:
                     result=(None,'multiple' if len(candidates)>1 else 'disconnected',None,None,None)
                 elif force or selected!=path or last is None or now-last>=self.INTERVAL:
-                    data=self.read(selected,action='read_battery')
+                    if self.closed.is_set():return
+                    data=self.read(selected,action='read_battery',**({'valid':lambda:not self.closed.is_set() and generation==self.generation} if self.read is run_device else {}))
                     result=(selected,'ready' if data is not None else 'no_data',data,self.wall(),self.clock())
                 else:result=(path,state,value,sampled,last)
             except Exception:
                 # Never present cached percentage as a current reading on failure.
                 result=(None,'unavailable',None,None,None)
-            self.queue.put(result)
-        threading.Thread(target=work,daemon=True).start()
+            self.queue.put((generation,result))
+        try:threading.Thread(target=work,daemon=True).start()
+        except Exception:
+            self.busy=False;self.state='unavailable';self.value=None;self.sampled_at=None
+            self.next_check=self.clock()+self.PRESENCE_INTERVAL
 
 def battery_text(m,language):
     ko=language=='ko'

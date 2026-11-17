@@ -1,0 +1,35 @@
+DS5Light Xbox-only ViGEm client — 2026-11-16
+MIT, derived from nefarius/ViGEmClient commit b66d02d57e32cc8595369c53418b843e958649b4.
+This is a locally modified, unsigned client DLL, not an official driver release.
+Driver packages and their official signatures are unchanged.
+
+Build-only tool (not shipped or installed on users' PCs): Zig 0.13.0 x64 Windows.
+https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip
+SHA256 d859994725ef9402381e557c60bb57497215682e355204d754ee3df75ee3c158
+Extract to work/native_toolchain/zig-windows-x86_64-0.13.0, or pass -ZigExe.
+From repository root:
+  ./native/build-vigem.ps1 -PythonExe <Python path>
+build.ps1 invokes the native build before the full suite and frozen build.
+
+Changes:
+- JoinedX360.h: owned Windows thread, startup publication barrier, overlapped I/O
+  wait on completion/cancel events, CancelIoEx plus cancellation drain, join before
+  releasing callback/target/client. No detached Xbox notification thread.
+- Exports ABI=2, stop with checked result and a thread error code.
+- Terminal driver errors stop the receiver instead of spinning.
+- CheckedIo.h handles immediate success/failure and waits only for IO_PENDING.
+  Connect/add/remove/update share it; all update completion failures propagate.
+- DS5Light uses Xbox only: unused DS4 functions, thread/event fields and the
+  DS4 target table are removed. DS4/async-add/old unregister exports are absent.
+- TestNotificationIo.h is compiled ONLY into a separate work/ test DLL. The
+  production DLL has no test exports. Tests use real Windows threads/events and
+  ctypes callbacks but never open a driver.
+
+Input report conversion and submission remain direct calls with checked I/O.
+No sockets, subprocesses, periodic device search or audio changes.
+Bundled source, local DLL hash and LLVM/MinGW notices accompany distribution.
+Stop waits for actual completion, not a fixed delay. If a broken kernel driver
+never completes cancellation, the worker remains in stopping state rather than
+freeing live native memory. Hardware cancellation timing remains to be tested.
+
+ABI2 is required by the current Python wrapper so old pre-fix client DLLs are rejected.

@@ -4,8 +4,25 @@ import time
 import struct
 import math
 import threading
+from contextlib import contextmanager
 
-_DEVICE_LOCK=threading.Lock()
+def response_waits(tries, early=False):
+    # One extra read probe, never an extra command. Preserve the old total wait.
+    return (.01, .05) + (.06,) * (tries-1) if early else (.06,) * tries
+
+_DEVICE_LOCK=threading.RLock()
+
+@contextmanager
+def device_lock(timeout=3):
+    if not _DEVICE_LOCK.acquire(timeout=timeout):raise TimeoutError('장치 조회 대기 시간 초과 · 다른 작업 완료 후 다시 시도하세요.')
+    try:yield
+    finally:_DEVICE_LOCK.release()
+
+class SnapshotChanged(RuntimeError):
+    """Profile metadata raced with an independently validated RAM AH read."""
+    def __init__(self, ah):
+        super().__init__('Profile changed during query; refresh')
+        self.ah = ah
 
 @dataclass(frozen=True)
 class Slot:
@@ -55,6 +72,18 @@ class StudioClient:
             if raw[3]!=0:raise RuntimeError('Studio rejected Intensity')
             return None
         raise TimeoutError('Studio response missing; close portal and read again.')
+    def ah(self):
+        raw=self.control_packet(4,0x12)
+        if raw[4] not in (0,1,2):raise RuntimeError("Invalid RAM AH response")
+        return raw[4]
+    def snapshot(self):
+        try:before=self.profile()
+        except Exception:before=None
+        ah=self.ah()
+        try:after=self.profile()
+        except Exception:after=None
+        if before!=after:raise SnapshotChanged(ah)
+        return dict(profile=after,ah=ah)
     def intensity(self):
         return self.intensity_reply(4)
     def set_intensity(self,value):
@@ -67,8 +96,8 @@ class StudioClient:
     def metadata(self,command):
         if command not in (0x67,0x05):raise ValueError('Invalid metadata command')
         if self.device.send_feature_report(bytes([0x80,0x66,command])+bytes(61))!=64:raise RuntimeError('Studio HID read request failed')
-        for _ in range(10):
-            self.sleep(.06)
+        for delay in response_waits(10, command==4):
+            self.sleep(delay)
             try:raw=bytes(self.device.get_feature_report(0x81,64))
             except OSError:continue
             if len(raw)>=22 and raw[:3]==bytes([0x81,0x66,command]):return raw
@@ -109,8 +138,8 @@ class StudioClient:
     def control_packet(self,command,field,payload=b''):
         packet=bytes([0x80,0x66,command,field])+payload
         if self.device.send_feature_report(packet+bytes(64-len(packet)))!=64:raise RuntimeError('Studio HID write failed')
-        for _ in range(10):
-            self.sleep(.06)
+        for delay in response_waits(10, command==4):
+            self.sleep(delay)
             try:raw=bytes(self.device.get_feature_report(0x81,64))
             except OSError:continue
             if len(raw)<8 or raw[:3]!=bytes([0x81,0x66,command]):continue
@@ -137,19 +166,49 @@ class StudioClient:
 
 def devices():
     import hid
-    return [d for d in hid.enumerate(0x054c,0) if d.get('product_id') in (0x0ce6,0x0df2)
+    from windows_device_identity import hid_container
+    return [dict(d,container_id=hid_container(d['path'])) for d in hid.enumerate(0x054c,0) if d.get('product_id') in (0x0ce6,0x0df2)
             and d.get('usage_page')==1 and d.get('usage') in (4,5)]
 
-def run_device(path,index=None,action=None,value=None):
+def run_device(path,index=None,action=None,value=None,valid=None,expected_profile=None):
     # Serialize the shared HID response buffers across settings and battery reads.
-    with _DEVICE_LOCK:return _run_device(path,index,action,value)
+    with device_lock():
+        if valid is not None and not valid():raise RuntimeError('Operation cancelled before transmission')
+        return _run_device(path,index,action,value,valid,expected_profile)
 
-def _run_device(path,index=None,action=None,value=None):
+def _run_device(path,index=None,action=None,value=None,valid=None,expected_profile=None):
     import hid
     d=hid.device()
     try:
         d.open_path(path)
-        client=StudioClient(d)
+        class CheckedDevice:
+            def __getattr__(self,name):return getattr(d,name)
+            def send_feature_report(self,packet):
+                if valid is not None and not valid():raise RuntimeError('Cancelled; any previously sent write outcome is unconfirmed')
+                if len(packet)>2 and packet[2] in (1,9) and expected_profile is not None:
+                    # Last read immediately before an irreversible command. The
+                    # lock cannot exclude an external Portal, so still verify after.
+                    if StudioClient(d).profile()!=expected_profile:
+                        raise RuntimeError('Profile changed before write; refresh')
+                    if valid is not None and not valid():raise RuntimeError('Cancelled before write')
+                return d.send_feature_report(packet)
+        client=StudioClient(CheckedDevice())
+        if expected_profile is not None and client.profile()!=expected_profile:
+            raise RuntimeError('Profile changed; discard pending write and refresh')
+        if action=='read_snapshot':return client.snapshot()
+        if action=='read_ah':return client.ah()
+        if action=='read_strengths':
+            values={};errors={}
+            try:before=client.profile()
+            except Exception as exc:before=None;errors['profile']=str(exc)
+            for key,fn in (('intensity',client.intensity),('gain',lambda:client.control(1)),('trigger',lambda:client.control(0xc0)),('ah',client.ah)):
+                try:values[key]=fn()
+                except Exception as exc:errors[key]=str(exc)
+            try:after=client.profile()
+            except Exception:after=None
+            if before!=after:raise RuntimeError('Profile changed during strength query')
+            values['profile']=after
+            return values,errors
         if action=='read_profile':return client.profile()
         if action=='read_firmware':return client.firmware()
         if action=='read_battery':return client.battery()
@@ -157,5 +216,11 @@ def _run_device(path,index=None,action=None,value=None):
         if action in ('read_trigger','set_trigger'):return client.control(0xc0,value if action=='set_trigger' else None)
         if action=='read_intensity':return client.intensity()
         if action=='set_intensity':return client.set_intensity(value)
-        return client.slots() if index is None else client.activate(index)
+        if index is not None:
+            from temporary_remap import path_for,restore
+            if path_for(path).exists():
+                from remapping import MacroClient
+                restore(MacroClient(CheckedDevice(),valid or (lambda:True)),path)
+            return client.activate(index)
+        return client.slots()
     finally: d.close()

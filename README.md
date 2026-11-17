@@ -1,74 +1,27 @@
-﻿# DS5 Light
+# DS5 Light 1.0
 
-[한국어 소개](PRODUCT_KO.md) · [Setup guide](SETUP.md) · [User guide (TXT)](README.txt)
+Pico 2 W의 DS5Dongle-Studio와 함께 사용하는 Windows x64 오디오햅틱·버튼 리매핑 프로그램입니다.
 
-A lightweight Windows audio-haptics preprocessor for **[DS5Dongle-Studio](https://github.com/artzox/DS5Dongle-Studio)**.
+## 실행
+Releases의 Windows ZIP 전체를 풀고 DS5Light.exe를 실행하세요. _internal 폴더가 필요합니다. Python 설치는 필요하지 않습니다.
+기본/Xbox 모두 입력 테스트는 오디오햅틱 OFF에서 사용합니다. 일반 진동과 오디오햅틱 동시 사용은 Studio Mix 설정을 확인하세요.
+다른 패드 변환 앱은 종료한 뒤 번갈아 사용하세요. Watchdog는 Xbox와 자동 연동하지 않습니다. 드라이버 설치·제거는 사용자 동의 후 진행합니다.
+설정은 %LOCALAPPDATA%/DS5Light에 저장됩니다. 장치별 복구 기록을 다른 PC로 옮기지 마세요.
 
-DS5 Light adds adaptive filtering to the copy of game audio sent to your dongle. It aims to reduce unwanted vibration from music and dialogue while retaining the timing and texture of game effects. Your listening audio stays unchanged.
+## 소스 빌드
+Windows x64, Python 3.12 x64(Tcl/Tk 포함), .NET Framework 4 x64 C# 컴파일러가 필요합니다.
+1. `py -3.12 -m venv .venv`
+2. `.\.venv\Scripts\python.exe -m pip install -r requirements-build.txt`
+3. `native/vigem-client/BUILD.txt`에 따라 Zig 0.13.0을 준비합니다. 기본 경로는 `work/native_toolchain/zig-windows-x86_64-0.13.0/zig.exe`입니다.
+4. 공식 릴리스에서 아래 설치 파일을 다운로드해 지정 위치에 놓습니다. `vendor/driver-components.json`의 SHA256과 일치해야 합니다. 이 단계는 설치 파일 준비이며 드라이버 설치가 아닙니다.
+   - https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0 → `vendor/vigem/ViGEmBus_1.22.0_x64_x86_arm64.exe`
+   - https://github.com/nefarius/HidHide/releases/tag/v1.5.230.0 → `vendor/hidhide/HidHide_1.5.230_x64.exe`
+5. `.\build.ps1 -PythonExe .\.venv\Scripts\python.exe -DistPath dist-1.0`
+결과는 `dist-1.0/DS5Light`입니다. 소스 공개본에는 개발 실험·검증용 테스트 및 보고서를 포함하지 않았습니다. 공개용 build.ps1은 배포 빌드를 수행하며 전체 테스트가 실행됐다고 표시하지 않습니다.
 
-## Features
+## 사용 범위
+PortAudio blocking 출력과 Studio 펌웨어를 유지합니다. 터보·토글은 지원되는 Xbox 패드 출력 전용입니다.
+실제 장치·게임의 지연/CPU/품질/저장 지속성은 사용 환경에서 별도 확인이 필요합니다.
 
-- Capture a selected game's audio or an entire output device.
-- Choose Detail, Balanced or Suppression, with adjustable suppression strength.
-- Include rear L/R, Center and LFE separately with 5.1 input.
-- Save game settings in 12 preset slots.
-- Switch between Korean and English UI.
-- Switch Studio dongle slots and adjust overall Gain, audio-haptics Intensity and shared trigger reduction from the main window.
-- View DualSense battery status, refreshed every five minutes, and sort processes by sampled CPU usage.
-- Restore the last PC settings on launch; Studio settings are separate.
-- Use the included **Audio Haptics** and **DS Native** Studio profiles.
-
-## How the filter works
-
-The filter considers how sound changes over time, adding another layer before Studio's own processing:
-
-1. **Adaptive background estimation:** Track the recent energy level in four frequency bands. Sound that stays near its background level receives more attenuation than sound rising above it.
-2. **Transient protection:** Compare sudden level increases with recent changes to reduce attenuation around new impacts, shots and other brief events. A sudden sound does not bypass the filter completely.
-3. **Limited, smooth attenuation:** Adjust each band's gain gradually, using shared left/right control. The filter reduces levels rather than applying an automatic output boost.
-
-This is CPU-based signal processing, with no large AI model or GPU inference in the default path. It does not identify or separate individual instruments or voices: music transients can pass through, and sustained effects can also be reduced. Results depend on the game, audio mix and Studio settings.
-
-## Requirements
-
-- Windows 10/11 x64. Selected-game capture requires Windows build 20348 or later; earlier Windows 10 builds can use whole-device capture.
-- A supported dongle running DS5Dongle-Studio and a DualSense controller.
-- A working Studio audio-haptics setup. Start with the supplied Audio Haptics profile.
-
-## Download and start
-
-Use the **Windows-x64 ZIP** from this repository's Releases section, rather than GitHub's source-code ZIP. Extract the entire archive and run `DS5Light.exe`; no Python installation is needed for the packaged app.
-
-1. Follow the [setup guide](SETUP.md) to store the supplied profiles in Studio.
-2. Activate **Audio Haptics** in Studio and open DS5 Light.
-3. Select your game, turn on the PC suppression filter, choose **Balanced**, and select **Start**.
-4. For native-haptics games, stop DS5 Light and activate **DS Native** in Studio.
-
-The PC filter is off in the shipped default configuration. Channel-format selection does not automatically read the game's internal audio settings.
-
-[Studio profile instructions](studio-presets/README.txt) · [Build instructions](README.txt) · [Component sources](SOURCES.md)
-
-## Attributions and licenses
-
-DS5 Light is an unofficial companion to [DS5Dongle-Studio](https://github.com/artzox/DS5Dongle-Studio), independently maintained rather than an official Studio release. Thank you to the upstream developers and contributors.
-
-| Project / component | License | Use in DS5 Light |
-|---|---|---|
-| [DS5Dongle-Studio](https://github.com/artzox/DS5Dongle-Studio) | MIT | Portions of the `ds5audio.py` audio bridge; original notices for awalol and artzox are retained |
-| [NumPy](https://numpy.org/) | BSD-3-Clause; bundled components have additional notices | Numerical array processing |
-| [SciPy](https://scipy.org/) | BSD-3-Clause; bundled components have additional notices | Digital filters and signal processing |
-| [PyAudioWPatch](https://github.com/s0d3s/PyAudioWPatch) | Apache-2.0 for the fork's contributions; retained PyAudio/PortAudio MIT notices | Windows audio capture and playback |
-| [Python](https://www.python.org/) | PSF license and included component notices | Packaged runtime |
-| [PyInstaller](https://pyinstaller.org/) | GPL-2.0-or-later with the distribution exception; component terms also apply | Application packaging |
-| DS5 Light's own code | [Custom free-use license](LICENSE.txt) | Application UI, processing and integration; sales and paid integration restricted |
-
-This table summarizes the main components, not every bundled dependency. Original Studio notices are in [vendor/LICENSE-Studio.txt](vendor/LICENSE-Studio.txt). See [SOURCES.md](SOURCES.md), [upstream notices](licenses/upstream), and the release's `THIRD_PARTY` directory for detailed provenance and license texts. Third-party licenses remain in force; the restrictions on DS5 Light's own code do not override them.
-
-Background-estimation concepts were also informed by [noisereduce](https://github.com/timsainb/noisereduce). Its implementation is not copied into the runtime; this is design reference, not an additional code dependency.
-
-## License
-
-Free use, modification and free redistribution are permitted under the [DS5 Light license](LICENSE.txt). Selling the program or integrating it into paid products or services requires separate permission. Using it as a tool for monetized game videos or streams is allowed.
-
-[English license translation](LICENSE_EN.txt) · [Distribution policy](DISTRIBUTION_POLICY_KO.md)
-
-The Korean license text controls. This custom license is not an OSI-approved open-source license. It does not grant rights to third-party assets; the current icon's original source and redistribution permission remain unverified.
+## 라이선스
+LICENSE.txt 및 LICENSE_EN.txt를 확인하세요. 제3자 구성요소는 각 원래 라이선스가 적용되며 licenses/와 vendor/에 고지를 보존합니다. 변경 내역은 CHANGELOG_100.txt에 있습니다.

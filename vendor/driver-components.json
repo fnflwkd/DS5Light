@@ -1,0 +1,19 @@
+{
+  "vigem": {
+    "filename": "ViGEmBus_1.22.0_x64_x86_arm64.exe",
+    "size": 6278576,
+    "sha256": "89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd014c6a",
+    "product": "{9C581C76-2D68-40F8-AA6F-94D3C5215C05}",
+    "version": "1.22.0",
+    "source": "https://github.com/nefarius/ViGEmBus",
+    "release": "https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0"
+  },
+  "hidhide": {
+    "filename": "HidHide_1.5.230_x64.exe",
+    "size": 8078016,
+    "sha256": "f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6",
+    "version": "1.5.230",
+    "source": "https://github.com/nefarius/HidHide",
+    "release": "https://github.com/nefarius/HidHide/releases/tag/v1.5.230.0"
+  }
+}

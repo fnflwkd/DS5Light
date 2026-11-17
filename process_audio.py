@@ -1,30 +1,24 @@
 """Windows per-process loopback helper transport. Fail closed, never full-system fallback."""
-import csv
-import io
 import struct
 import subprocess
 import threading
 import time
 from collections import deque
 from pathlib import Path
+from cleanup_utils import recover_owners,cleanup_failed_start
 
 HELPER=Path(__file__).with_name('ProcessCapture.exe')
 
-def processes():
-    result=subprocess.run(['tasklist.exe','/FO','CSV','/NH'],capture_output=True,timeout=8,creationflags=0x08000000)
-    if result.returncode: raise RuntimeError('프로그램 목록 조회 실패')
-    import locale
-    rows=csv.reader(io.StringIO(result.stdout.decode(locale.getpreferredencoding(False),errors='replace')))
-    excluded={'system','system idle process','registry','svchost.exe','conhost.exe','csrss.exe','smss.exe','wininit.exe','services.exe','lsass.exe','fontdrvhost.exe','dwm.exe','tasklist.exe','processcapture.exe'}
-    out=[]
-    for row in rows:
-        if len(row)>1 and row[1].isdigit() and row[0].lower() not in excluded:
-            out.append((row[0],int(row[1])))
-    return sorted(out,key=lambda x:(x[0].lower(),x[1]))
+_PENDING=set()  # Keep failed startup/teardown owners available for retry.
+
+def recover_pending():
+    return recover_owners(_PENDING)
 
 class ProcessCaptureStream:
     def __init__(self,pid,channels=6):
-        if channels not in (2,6): raise ValueError('게임 캡처 채널은 2 또는 6')
+        if channels not in (2,6,8): raise ValueError('게임 캡처 채널은 2, 6 또는 8')
+        recover_pending()
+        self.cleanup_complete=False
         self.pid,self.channels=pid,channels
         self.closed=False; self.error=None; self.ready=threading.Event()
         self.lock=threading.Lock(); self.queue=deque(maxlen=8); self.pending=bytearray()
@@ -32,11 +26,14 @@ class ProcessCaptureStream:
         self.drops=0; self.stale=0; self.messages=deque(maxlen=12)
         self.child=subprocess.Popen([str(HELPER),str(pid),str(channels)],stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,creationflags=0x08000000)
-        self.reader=threading.Thread(target=self._read,daemon=True); self.reader.start()
-        self.err_reader=threading.Thread(target=self._errors,daemon=True); self.err_reader.start()
-        if not self.ready.wait(7) or self.error:
-            self.close()
-            raise RuntimeError('게임 캡처 시작 실패: '+(self.error or '시간 초과')+' / '+' '.join(self.messages))
+        self.reader=None;self.err_reader=None
+        try:
+            self.reader=threading.Thread(target=self._read,daemon=True); self.reader.start()
+            self.err_reader=threading.Thread(target=self._errors,daemon=True); self.err_reader.start()
+            if not self.ready.wait(7) or self.error:
+                raise RuntimeError('게임 캡처 시작 실패: '+(self.error or '시간 초과')+' / '+' '.join(self.messages))
+        except Exception as exc:
+            cleanup_failed_start(self,exc);raise
     def _errors(self):
         import locale
         try:
@@ -88,15 +85,23 @@ class ProcessCaptureStream:
     def get_input_latency(self): return 0.0 # Not measured; process-mode status marks unknown.
     def stop_stream(self): self.close()
     def close(self):
-        if self.closed: return
-        self.closed=True
+        if getattr(self,'cleanup_complete',False):return
+        self.closed=True  # Stop producing data; this does not mean cleanup finished.
+        _PENDING.add(self)
         try:
-            self.child.stdin.close()
-            self.child.wait(timeout=1.5)
-        except subprocess.TimeoutExpired:
-            self.child.terminate(); self.child.wait(timeout=2)
-        finally:
-            self.reader.join(timeout=1); self.err_reader.join(timeout=1)
-            self.child.stdout.close(); self.child.stderr.close()
-        self.pending.clear()
-        with self.lock: self.queue.clear()
+            try:self.child.stdin.close()
+            except (OSError,ValueError):pass
+            try:self.child.wait(timeout=1.5)
+            except subprocess.TimeoutExpired:
+                self.child.terminate();self.child.wait(timeout=2)
+            for reader in (self.reader,self.err_reader):
+                if reader is not None and reader.ident is not None:
+                    reader.join(timeout=1)
+                    if reader.is_alive():raise RuntimeError('게임 캡처 읽기 스레드 종료 미확인')
+            self.child.stdout.close();self.child.stderr.close()
+            self.pending.clear()
+            with self.lock:self.queue.clear()
+        except Exception as exc:
+            raise RuntimeError('게임 캡처 종료 미확인 · 다시 시작하면 정리를 재시도합니다: '+str(exc)) from exc
+        self.cleanup_complete=True
+        _PENDING.discard(self)

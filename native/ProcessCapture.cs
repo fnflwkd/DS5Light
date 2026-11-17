@@ -66,7 +66,7 @@ class Program {
         try {
             if(args.Length<2) throw new ArgumentException("Usage: ProcessCapture PID channels [seconds]");
             uint pid=uint.Parse(args[0]); ushort channels=ushort.Parse(args[1]);
-            if(channels!=2 && channels!=6) throw new ArgumentException("channels must be 2 or 6");
+            if(channels!=2 && channels!=6 && channels!=8) throw new ArgumentException("channels must be 2, 6 or 8");
             double seconds=args.Length>2?double.Parse(args[2],System.Globalization.CultureInfo.InvariantCulture):0;
             Process target=Process.GetProcessById((int)pid);
             var cb=new Completed(); var ap=new Activation { Type=1, Pid=pid, Mode=0 };
@@ -77,7 +77,7 @@ class Program {
             if(!cb.Done.WaitOne(5000)) throw new TimeoutException("Activation timed out");
             stage="activation result"; Check(cb.Result); audio=(AudioClient)cb.Audio;
             Wave format=new Wave {Tag=65534,Channels=channels,Rate=48000,BytesPerSecond=(uint)(48000*channels*2),
-                Align=(ushort)(channels*2),Bits=16,Extra=22,ValidBits=16,Mask=channels==6?63u:3u,
+                Align=(ushort)(channels*2),Bits=16,Extra=22,ValidBits=16,Mask=channels==8?0x63fu:channels==6?63u:3u,
                 SubFormat=new Guid("00000001-0000-0010-8000-00aa00389b71")};
             stage="initialize"; Check(audio.Initialize(0,0x80060000,0,0,ref format,IntPtr.Zero));
             Guid captureIID=typeof(CaptureClient).GUID; object obj; Check(audio.GetService(ref captureIID,out obj));
